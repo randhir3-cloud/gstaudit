@@ -1,22 +1,22 @@
-version: '3.8'
-
 services:
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: excelmerge-backend
+    image: gstaudit-backend:latest
+    container_name: gstaudit-backend
     ports:
-      - "8000:8000"
+      - "8001:8000"
     restart: unless-stopped
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: excelmerge-frontend
+    image: gstaudit-frontend:latest
+    container_name: gstaudit-frontend
     ports:
-      - "8080:80"
+      - "8081:80"
     depends_on:
       - backend
     restart: unless-stopped

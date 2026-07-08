@@ -1,0 +1,33 @@
+# NUC production compose — ports chosen to avoid conflicts with other stacks:
+#   8080  sooheakhar-web
+#   3100  gk-circle-nginx
+#   8000  (reserved / free — backend published on 8001 instead)
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: gstaudit-backend:latest
+    container_name: gstaudit-backend
+    ports:
+      - "8001:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: gstaudit-frontend:latest
+    container_name: gstaudit-frontend
+    ports:
+      - "8081:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
