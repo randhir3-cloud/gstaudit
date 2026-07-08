@@ -28,7 +28,7 @@ function App() {
     return 'dark';
   });
 
-  const [activeTab, setActiveTab] = useState('gstr1'); // 'eway' or 'gstr1'
+  const [activeTab, setActiveTab] = useState('gstr2a'); // 'gstr1', 'gstr2a', or 'eway'
   const [files, setFiles] = useState([]); // Array of { id, file, name, size, period (for gstr1) }
   const [outputName, setOutputName] = useState('');
   const [isMerging, setIsMerging] = useState(false);
@@ -56,9 +56,9 @@ function App() {
   useEffect(() => {
     if (activeTab === 'eway') {
       setOutputName('eway_merged_output.xlsx');
+    } else if (activeTab === 'gstr2a') {
+      setOutputName('GSTR2A_Merged.xlsx');
     } else {
-      // Try to determine output name pattern like GSTR1_{GSTIN}_{FY}_Merged.xlsx
-      // We will let the API handle the name generation, but we can set a placeholder
       setOutputName('GSTR1_Merged.xlsx');
     }
     setFiles([]);
@@ -130,7 +130,9 @@ function App() {
     }
 
     const newFiles = validFiles.map((file, index) => {
-      const period = activeTab === 'gstr1' ? extractPeriodFromFilename(file.name) : null;
+      const period = (activeTab === 'gstr1' || activeTab === 'gstr2a')
+        ? extractPeriodFromFilename(file.name)
+        : null;
       return {
         id: `file_${Date.now()}_${index}_${Math.random().toString(36).substr(2, 5)}`,
         file,
@@ -143,8 +145,8 @@ function App() {
     setFiles(prev => {
       const combined = [...prev, ...newFiles];
       
-      // Auto sort GSTR-1 files in Financial Year order upon upload
-      if (activeTab === 'gstr1') {
+      // Auto sort monthly GST files in Financial Year order upon upload
+      if (activeTab === 'gstr1' || activeTab === 'gstr2a') {
         combined.sort((a, b) => getFYMonthSortKey(a.name) - getFYMonthSortKey(b.name));
       }
       return combined;
@@ -222,8 +224,14 @@ function App() {
       formData.append('files', f.file);
     });
 
-    const endpoint = activeTab === 'eway' ? '/api/merge/eway' : '/api/merge/gstr1';
-    const queryParam = activeTab === 'gstr1' ? `?ignore_missing=${ignoreMissing}` : '';
+    const endpoint = activeTab === 'eway'
+      ? '/api/merge/eway'
+      : activeTab === 'gstr2a'
+        ? '/api/merge/gstr2a'
+        : '/api/merge/gstr1';
+    const queryParam = (activeTab === 'gstr1' || activeTab === 'gstr2a')
+      ? `?ignore_missing=${ignoreMissing}`
+      : '';
 
     try {
       const response = await fetch(`${API_BASE_URL}${endpoint}${queryParam}`, {
@@ -235,7 +243,7 @@ function App() {
         const errorData = await response.json();
         
         // Handle GSTR-1 Missing Months Warning
-        if (activeTab === 'gstr1' && errorData.error_type === 'missing_months') {
+        if ((activeTab === 'gstr1' || activeTab === 'gstr2a') && errorData.error_type === 'missing_months') {
           setWarningModal({
             isOpen: true,
             missingMonths: errorData.missing
@@ -289,10 +297,12 @@ function App() {
               <FileSpreadsheet className="h-6 w-6" />
             </div>
             <div>
-              <h1 className="text-xl font-bold tracking-tight text-zinc-950 dark:text-white flex items-center">
-                Excel Merger <span className="ml-2 text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300">Web</span>
+              <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-zinc-950 dark:text-white">
+                Goods and Services Tax
               </h1>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400">GST Excel & E-Way Bill Utility</p>
+              <p className="text-sm md:text-base text-zinc-600 dark:text-zinc-300 mt-0.5">
+                Excel Merger for GST Audit
+              </p>
             </div>
           </div>
           <div className="flex items-center space-x-4">
@@ -311,7 +321,7 @@ function App() {
       <main className="flex-1 max-w-5xl w-full mx-auto p-6 md:p-8 space-y-6">
         
         {/* TABS SELECTOR */}
-        <div className="grid grid-cols-2 p-1 bg-zinc-100 dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 max-w-md mx-auto">
+        <div className="grid grid-cols-3 p-1 bg-zinc-100 dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 max-w-2xl mx-auto">
           <button
             onClick={() => setActiveTab('gstr1')}
             className={`py-2 px-4 rounded-lg font-medium text-sm transition-all duration-200 flex items-center justify-center space-x-2 ${
@@ -321,7 +331,18 @@ function App() {
             }`}
           >
             <FileText className="h-4 w-4" />
-            <span>GSTR-1 Merge</span>
+            <span>GSTR-1</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('gstr2a')}
+            className={`py-2 px-4 rounded-lg font-medium text-sm transition-all duration-200 flex items-center justify-center space-x-2 ${
+              activeTab === 'gstr2a'
+                ? 'bg-white dark:bg-zinc-800 text-blue-600 dark:text-blue-400 shadow-sm border border-zinc-200/50 dark:border-zinc-700/50'
+                : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+            }`}
+          >
+            <FileText className="h-4 w-4" />
+            <span>GSTR-2A</span>
           </button>
           <button
             onClick={() => setActiveTab('eway')}
@@ -332,7 +353,7 @@ function App() {
             }`}
           >
             <Sparkles className="h-4 w-4" />
-            <span>E-Way Bill Merge</span>
+            <span>E-Way Bill</span>
           </button>
         </div>
 
@@ -459,11 +480,19 @@ function App() {
                 </div>
 
                 {/* INSTRUCTION NOTE */}
-                {activeTab === 'gstr1' && (
+                {(activeTab === 'gstr1' || activeTab === 'gstr2a') && (
                   <div className="m-4 p-3 bg-zinc-50 dark:bg-zinc-950/40 rounded-xl border border-zinc-100 dark:border-zinc-800 text-xs text-zinc-500 dark:text-zinc-400 flex items-start space-x-2">
                     <HelpCircle className="h-4 w-4 text-blue-500 mt-0.5 flex-shrink-0" />
                     <div>
-                      <span className="font-semibold text-zinc-700 dark:text-zinc-300">GSTR-1 Order Notice:</span> Files are automatically ordered by their Financial Year month sequence (April → March). You can adjust this sequence using the Up/Down buttons if needed.
+                      {activeTab === 'gstr2a' ? (
+                        <>
+                          <span className="font-semibold text-zinc-700 dark:text-zinc-300">GSTR-2A Notice:</span> Files are ordered April → March. Only invoice/note total rows are kept (values ending in <span className="font-mono">-Total</span>, or bold summary rows on sheets like B2BA).
+                        </>
+                      ) : (
+                        <>
+                          <span className="font-semibold text-zinc-700 dark:text-zinc-300">GSTR-1 Order Notice:</span> Files are automatically ordered by their Financial Year month sequence (April → March). You can adjust this sequence using the Up/Down buttons if needed.
+                        </>
+                      )}
                     </div>
                   </div>
                 )}
@@ -537,9 +566,18 @@ function App() {
 
       {/* FOOTER */}
       <footer className="border-t border-zinc-200 dark:border-zinc-800 py-6 bg-white dark:bg-zinc-950 text-center text-xs text-zinc-400 dark:text-zinc-500 mt-auto">
-        <p className="max-w-5xl mx-auto px-6">
-          Excel Merger Web App • Built by Randhir Singh
-        </p>
+        <div className="max-w-5xl mx-auto px-6 space-y-1">
+          <p>Excel Merger for GST Audit • Built by Randhir Singh</p>
+          <p>
+            For any query, send email to{' '}
+            <a
+              href="mailto:randhirsandhu81@gmail.com"
+              className="text-blue-600 dark:text-blue-400 hover:underline"
+            >
+              randhirsandhu81@gmail.com
+            </a>
+          </p>
+        </div>
       </footer>
 
       {/* WARNING MODAL FOR MISSING MONTHS */}

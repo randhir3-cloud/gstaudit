@@ -337,3 +337,329 @@ def merge_gstr1_files(files: List[Tuple[str, bytes]]) -> Tuple[io.BytesIO, str, 
     output_buffer.seek(0)
 
     return output_buffer, auto_name, missing
+
+# ---- GSTR-2A Merger ----
+GSTR2A_SKIP_SHEETS = {'read me'}
+GSTR2A_NUMBER_HEADERS = {
+    'invoice number', 'note number', 'isd invoice number', 'number',
+    'document number', 'document number ', 'note number ', 'note number',
+}
+GSTR2A_SUBHEADER_LABELS = {
+    'invoice type', 'note type', 'note supply type', 'invoice details',
+    'credit note/debit note details', 'original details', 'revised details',
+    'document type', 'document date', 'document value',
+    'eligibility of itc', 'isd document type', 'document number',
+    'note number', 'note date', 'note value',
+}
+GSTR2A_HEADER_HINTS = (
+    'gstin', 'invoice number', 'document number', 'note number',
+    'original details', 'revised details', 'trade/legal', 'place of supply',
+    'taxable value', 'document type', 'invoice type', 'note type',
+    'eligibility of itc', 'isd document', 'document details',
+)
+GSTIN_PATTERN = re.compile(r'^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z0-9]Z[A-Z0-9]$')
+DATE_PATTERN = re.compile(r'^\d{2}-\d{2}-\d{4}$')
+
+def _normalize_header_key(label: str) -> str:
+    return str(label or '').strip().lower()
+
+def _is_number_header_label(label: str) -> bool:
+    key = _normalize_header_key(label)
+    if not key or len(key) > 40:
+        return False
+    if key in GSTR2A_NUMBER_HEADERS:
+        return True
+    return key.endswith('number')
+
+def row_has_data(ws, row_idx: int, max_col: int) -> bool:
+    for c in range(1, max_col + 1):
+        val = ws.cell(row_idx, c).value
+        if val is not None and str(val).strip() != '':
+            return True
+    return False
+
+def is_gstr2a_data_row(ws, row_idx: int, max_col: int) -> bool:
+    """Heuristic: distinguish data rows from header/sub-header rows."""
+    if not row_has_data(ws, row_idx, max_col):
+        return False
+
+    row_text = ' '.join(
+        _normalize_header_key(ws.cell(row_idx, c).value)
+        for c in range(1, max_col + 1)
+    )
+
+    if any(hint in row_text for hint in GSTR2A_HEADER_HINTS):
+        if not any(
+            GSTIN_PATTERN.match(str(ws.cell(row_idx, c).value or '').strip())
+            or str(ws.cell(row_idx, c).value or '').strip().endswith('-Total')
+            for c in range(1, max_col + 1)
+        ):
+            return False
+
+    for c in range(1, max_col + 1):
+        val = ws.cell(row_idx, c).value
+        if val is None:
+            continue
+        text = str(val).strip()
+        if not text:
+            continue
+        if GSTIN_PATTERN.match(text):
+            return True
+        if text.endswith('-Total'):
+            return True
+        if DATE_PATTERN.match(text):
+            return True
+        if isinstance(val, (int, float)) and c >= 6:
+            return True
+
+    return False
+
+def find_gstr2a_header_end(ws) -> int:
+    """
+    Detect the last header row for this sheet (typically row 6 or 7).
+    Scans downward until the first data-like row is found.
+    """
+    max_col = ws.max_column
+    last_header = 4
+
+    for r in range(5, min(ws.max_row, 12) + 1):
+        if not row_has_data(ws, r, max_col):
+            continue
+        if is_gstr2a_data_row(ws, r, max_col):
+            break
+        last_header = r
+
+    return last_header
+
+def find_gstr2a_number_column(ws, header_end: int) -> Tuple[int, int, str]:
+    """
+    Find the document/invoice/note number column within the header block.
+    For amendment sheets (CDNRA/ECOA/ISDA/B2BA), prefer the sub-header row column.
+    """
+    candidates: List[Tuple[int, int, str]] = []
+    for r in range(1, header_end + 1):
+        for c in range(1, ws.max_column + 1):
+            label = str(ws.cell(r, c).value or '').strip()
+            if _is_number_header_label(label):
+                candidates.append((r, c, label))
+
+    if not candidates:
+        return 0, 0, ''
+
+    # Latest header row wins (row 7 sub-header over row 6 main header)
+    return max(candidates, key=lambda item: (item[0], item[1]))
+
+def get_gstr2a_sheet_layout(ws) -> Tuple[int, int, int, str]:
+    """Return (header_end, data_start, num_col, num_label)."""
+    header_end = find_gstr2a_header_end(ws)
+    header_row, num_col, num_label = find_gstr2a_number_column(ws, header_end)
+    data_start = header_end + 1
+    return header_end, data_start, num_col, num_label
+
+def unmerge_from_row(ws, start_row: int) -> None:
+    """Remove merged ranges that would block writing data rows."""
+    for merged_range in list(ws.merged_cells.ranges):
+        if merged_range.max_row >= start_row:
+            ws.unmerge_cells(str(merged_range))
+
+def is_gstr2a_summary_row(ws, row_idx: int, num_col: int, header_end: int) -> bool:
+    """Keep invoice/note total rows (-Total suffix or bold summary rows)."""
+    if row_idx <= header_end or num_col <= 0:
+        return False
+
+    cell = ws.cell(row_idx, num_col)
+    val = cell.value
+    if val is None or str(val).strip() == '':
+        return False
+
+    text = str(val).strip()
+    if _is_number_header_label(text):
+        return False
+    if text.endswith('-Total'):
+        return True
+
+    if cell.font and cell.font.bold:
+        return True
+
+    return False
+
+def extract_gstr2a_summary_rows(
+    ws,
+    period: str,
+    header_end: int,
+    data_start: int,
+    num_col: int,
+    max_col: int,
+) -> List[Tuple[str, int, int]]:
+    """Return list of (period, source_row_index, max_col) for summary rows."""
+    if data_start > ws.max_row:
+        return []
+
+    rows: List[Tuple[str, int, int]] = []
+    use_summary_filter = num_col > 0
+
+    if use_summary_filter:
+        has_total_suffix = any(
+            str(ws.cell(r, num_col).value or '').strip().endswith('-Total')
+            for r in range(data_start, ws.max_row + 1)
+            if ws.cell(r, num_col).value not in (None, '')
+        )
+
+    for r in range(data_start, ws.max_row + 1):
+        if not row_has_data(ws, r, max_col):
+            continue
+        if not is_gstr2a_data_row(ws, r, max_col):
+            continue
+
+        if not use_summary_filter:
+            continue
+
+        if has_total_suffix:
+            val = ws.cell(r, num_col).value
+            if val is not None and str(val).strip().endswith('-Total'):
+                rows.append((period, r, max_col))
+        elif is_gstr2a_summary_row(ws, r, num_col, header_end):
+            rows.append((period, r, max_col))
+
+    return rows
+
+def merge_gstr2a_files(files: List[Tuple[str, bytes]]) -> Tuple[io.BytesIO, str, List[str]]:
+    """
+    Merge monthly GSTR-2A workbooks, keeping only invoice/note total rows.
+    Preserves row formatting from source files (bold totals, number formats).
+    """
+    if not files:
+        raise ValueError("No files provided for merging.")
+
+    filenames = [f[0] for f in files]
+    missing = find_missing_months(filenames)
+    sorted_files = sorted(files, key=lambda f: file_fy_key(f[0]))
+
+    period_keys = []
+    for filename, _ in sorted_files:
+        m = re.search(r'_(\d{2})(\d{4})_', filename)
+        if m:
+            mm, yyyy = m.group(1), m.group(2)
+            period_keys.append(
+                (int(yyyy) * 100 + int(mm), FULL_MONTH_MAP.get(mm, mm), yyyy)
+            )
+
+    if period_keys:
+        period_keys.sort()
+        first_label = f"{period_keys[0][1]} {period_keys[0][2]}"
+        last_label = f"{period_keys[-1][1]} {period_keys[-1][2]}"
+        tax_period_text = (
+            first_label if first_label == last_label
+            else f"{first_label} to {last_label}"
+        )
+    else:
+        tax_period_text = "Full Period"
+
+    sheet_rows: Dict[str, List[Tuple[str, str, int, int]]] = {}
+
+    for filename, content in sorted_files:
+        period = extract_period(filename)
+        src_wb = openpyxl.load_workbook(io.BytesIO(content))
+
+        for sheet_name in src_wb.sheetnames:
+            if sheet_name.strip().lower() in GSTR2A_SKIP_SHEETS:
+                continue
+
+            ws = src_wb[sheet_name]
+            header_end, data_start, num_col, _ = get_gstr2a_sheet_layout(ws)
+            max_col = ws.max_column
+            summary_rows = extract_gstr2a_summary_rows(
+                ws, period, header_end, data_start, num_col, max_col
+            )
+
+            if not summary_rows:
+                continue
+
+            if sheet_name not in sheet_rows:
+                sheet_rows[sheet_name] = []
+
+            for row_period, row_idx, row_max_col in summary_rows:
+                sheet_rows[sheet_name].append(
+                    (row_period, filename, row_idx, row_max_col)
+                )
+
+        src_wb.close()
+
+    first_filename, first_content = sorted_files[0]
+    wb = openpyxl.load_workbook(io.BytesIO(first_content))
+
+    readme_ws_name = next(
+        (sn for sn in wb.sheetnames if sn.strip().lower() == 'read me'),
+        None
+    )
+
+    if readme_ws_name:
+        ws_rm_meta = wb[readme_ws_name]
+        gstin_val = ws_rm_meta.cell(row=2, column=3).value or ''
+        fy_val = ws_rm_meta.cell(row=3, column=5).value or ''
+        safe_gstin = re.sub(r'[\\/:*?"<>|]', '_', str(gstin_val).strip())
+        safe_fy = re.sub(r'[\\/:*?"<>|]', '_', str(fy_val).strip())
+        auto_name = f"GSTR2A_{safe_gstin}_{safe_fy}_Merged.xlsx"
+    else:
+        auto_name = "GSTR2A_Merged.xlsx"
+
+    if readme_ws_name:
+        ws_rm = wb[readme_ws_name]
+        ws_rm.cell(row=2, column=5).value = tax_period_text
+
+    file_cache: Dict[str, Any] = {}
+
+    def get_source_wb(fname: str, content_bytes: bytes):
+        if fname not in file_cache:
+            file_cache[fname] = openpyxl.load_workbook(io.BytesIO(content_bytes))
+        return file_cache[fname]
+
+    file_bytes_map = {fn: content for fn, content in sorted_files}
+
+    for sheet_name in wb.sheetnames:
+        if sheet_name.strip().lower() in GSTR2A_SKIP_SHEETS:
+            continue
+        if sheet_name not in sheet_rows:
+            continue
+
+        ws = wb[sheet_name]
+        header_end, data_start, num_col, _ = get_gstr2a_sheet_layout(ws)
+        WRITE_START = data_start
+        max_data_col = ws.max_column
+
+        sp_col = max_data_col + 1
+        sp_ref_hdr = ws.cell(row=header_end, column=max_data_col)
+        if sp_ref_hdr.value in (None, ''):
+            sp_ref_hdr = ws.cell(row=max(1, header_end - 1), column=max_data_col)
+
+        sp_hdr_cell = ws.cell(row=header_end, column=sp_col, value='Source_Period')
+        copy_cell_style(sp_ref_hdr, sp_hdr_cell)
+
+        unmerge_from_row(ws, WRITE_START)
+
+        if ws.max_row >= WRITE_START:
+            ws.delete_rows(WRITE_START, ws.max_row - WRITE_START + 1)
+
+        for r_offset, (row_period, src_fname, src_row, src_max_col) in enumerate(
+            sheet_rows[sheet_name]
+        ):
+            excel_row = WRITE_START + r_offset
+            src_wb = get_source_wb(src_fname, file_bytes_map[src_fname])
+            src_ws = src_wb[sheet_name]
+
+            write_cols = max(max_data_col, src_max_col)
+            for c in range(1, write_cols + 1):
+                src_cell = src_ws.cell(src_row, c)
+                dst_cell = ws.cell(excel_row, c, value=src_cell.value)
+                copy_cell_style(src_cell, dst_cell)
+
+            sp_cell = ws.cell(excel_row, sp_col, value=row_period)
+            copy_cell_style(sp_ref_hdr, sp_cell)
+
+    for cached_wb in file_cache.values():
+        cached_wb.close()
+
+    output_buffer = io.BytesIO()
+    wb.save(output_buffer)
+    output_buffer.seek(0)
+    return output_buffer, auto_name, missing
