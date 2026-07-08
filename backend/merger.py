@@ -1,6 +1,7 @@
 import io
 import re
 import copy as _copy_module
+from datetime import datetime
 from typing import List, Tuple, Dict, Any
 import pandas as pd
 import numpy as np
@@ -120,6 +121,40 @@ def safe_value(val):
     return val
 
 # ---- E-Way Bill Merger ----
+def find_eway_date_column(df: pd.DataFrame):
+    """Locate the 'EWB No & Dt' column (typically column F)."""
+    for col in df.columns:
+        col_text = str(col).lower().replace('\n', ' ').replace('  ', ' ')
+        if 'ewb' in col_text and ('dt' in col_text or 'date' in col_text):
+            return col
+    if len(df.columns) > 5:
+        return df.columns[5]
+    return None
+
+def parse_eway_source_period(value) -> str:
+    """Parse month-year from EWB cell like '101581579034 - 11/01/2023 10:29:00'."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ''
+
+    if hasattr(value, 'month') and hasattr(value, 'year'):
+        return f"{MONTH_MAP.get(f'{value.month:02d}', value.month)}-{value.year}"
+
+    text = str(value).strip()
+    if not text:
+        return ''
+
+    date_text = text.split(' - ', 1)[-1].strip() if ' - ' in text else text
+    date_text = date_text.split()[0] if ' ' in date_text else date_text
+
+    for fmt in ('%d/%m/%Y', '%d-%m-%Y', '%d/%m/%y', '%d-%m-%y'):
+        try:
+            parsed = datetime.strptime(date_text, fmt)
+            return f"{MONTH_MAP.get(f'{parsed.month:02d}', parsed.month)}-{parsed.year}"
+        except ValueError:
+            continue
+
+    return ''
+
 def merge_eway_bills(files: List[Tuple[str, bytes]]) -> io.BytesIO:
     """
     files: List of tuples containing (filename, file_content_bytes)
@@ -155,8 +190,13 @@ def merge_eway_bills(files: List[Tuple[str, bytes]]) -> io.BytesIO:
                     df = pd.read_excel(xls, sheet_name=sheet_name, engine='openpyxl')
                 except Exception:
                     df = pd.read_excel(xls, sheet_name=sheet_name)
-                df['Source_File']  = filename
-                df['Source_Sheet'] = sheet_name
+
+                date_col = find_eway_date_column(df)
+                if date_col is not None:
+                    df['Source_Period'] = df[date_col].apply(parse_eway_source_period)
+                else:
+                    df['Source_Period'] = ''
+
                 all_dfs.append(df)
         except Exception as e:
             raise ValueError(f"Error processing {filename}: {str(e)}")
