@@ -3,7 +3,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Environments
+# Environments and Secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
 .env/
 venv/
 .venv/
