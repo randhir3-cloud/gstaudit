@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Purchase Register Import</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; color: #1a1a1a; background: #f6f8fb; }
+    body { margin: 0; padding: 24px; }
+    .panel { max-width: 1100px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 2px 12px rgba(0,0,0,.08); }
+    h1 { margin-top: 0; font-size: 1.5rem; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
+    label { font-size: .85rem; font-weight: 600; display: block; margin-bottom: 4px; }
+    input, select, button { font: inherit; padding: 8px 12px; border-radius: 8px; border: 1px solid #cbd5e1; }
+    button { background: #1d4ed8; color: #fff; border: none; cursor: pointer; }
+    button.secondary { background: #64748b; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: .9rem; }
+    th, td { border: 1px solid #e2e8f0; padding: 8px; text-align: left; }
+    th { background: #f1f5f9; }
+    .status { padding: 8px 12px; border-radius: 8px; background: #eff6ff; margin-top: 12px; }
+    .error { background: #fef2f2; color: #991b1b; }
+    .ok { background: #ecfdf5; color: #065f46; }
+    .mapping-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+    .field-card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; }
+  </style>
+</head>
+<body>
+  <div class="panel" data-testid="purchase-import-workbench">
+    <h1>Purchase Register Import</h1>
+    <p>Upload Excel/CSV, review auto-detected columns, save mapping profile, and import into the audit session.</p>
+
+    <div class="row">
+      <div>
+        <label for="sessionId">Session ID</label>
+        <input id="sessionId" data-testid="purchase-session-id" placeholder="session_..." style="min-width:280px" />
+      </div>
+      <div>
+        <label for="fileInput">Purchase Register file</label>
+        <input id="fileInput" data-testid="purchase-file-input" type="file" accept=".xlsx,.xls,.csv" />
+      </div>
+      <div style="align-self:flex-end">
+        <button id="previewBtn" data-testid="purchase-preview-btn">Preview / Detect</button>
+      </div>
+    </div>
+
+    <div id="meta" class="status" hidden></div>
+
+    <div id="mappingSection" hidden>
+      <h2>Column Mapping</h2>
+      <div id="mappingGrid" class="mapping-grid"></div>
+      <div class="row" style="margin-top:16px">
+        <input id="profileId" data-testid="purchase-profile-id" placeholder="Profile ID (e.g. tally-fy23)" />
+        <button id="saveProfileBtn" class="secondary" data-testid="purchase-save-profile-btn">Save Profile</button>
+        <button id="importBtn" data-testid="purchase-import-btn">Import to Session</button>
+      </div>
+    </div>
+
+    <div id="sampleSection" hidden>
+      <h2>Sample Rows</h2>
+      <div style="overflow:auto"><table id="sampleTable"><thead></thead><tbody></tbody></table></div>
+    </div>
+
+    <div id="message" class="status" hidden></div>
+  </div>
+
+  <script>
+    const state = { fileBase64: '', filename: '', columns: [], fields: [], mapping: {}, template: 'generic' };
+
+    function authHeaders() {
+      const token = localStorage.getItem('gais_access_token') || localStorage.getItem('gais_token') || sessionStorage.getItem('gais_token') || '';
+      return token ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
+    }
+
+    function showMessage(text, ok = true) {
+      const el = document.getElementById('message');
+      el.hidden = false;
+      el.className = ok ? 'status ok' : 'status error';
+      el.textContent = text;
+    }
+
+    async function fileToBase64(file) {
+      const buffer = await file.arrayBuffer();
+      let binary = '';
+      const bytes = new Uint8Array(buffer);
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      return btoa(binary);
+    }
+
+    function renderMapping() {
+      const grid = document.getElementById('mappingGrid');
+      grid.innerHTML = '';
+      state.fields.forEach((field) => {
+        const card = document.createElement('div');
+        card.className = 'field-card';
+        const label = document.createElement('label');
+        label.textContent = field.replace(/_/g, ' ');
+        const select = document.createElement('select');
+        select.dataset.field = field;
+        select.innerHTML = '<option value="">— skip —</option>' + state.columns.map((c) => `<option value="${c}">${c}</option>`).join('');
+        if (state.mapping[field]) select.value = state.mapping[field];
+        select.addEventListener('change', () => { state.mapping[field] = select.value || null; });
+        card.appendChild(label);
+        card.appendChild(select);
+        grid.appendChild(card);
+      });
+      document.getElementById('mappingSection').hidden = false;
+    }
+
+    function renderSample(rows) {
+      if (!rows || !rows.length) return;
+      const table = document.getElementById('sampleTable');
+      const cols = Object.keys(rows[0]);
+      table.querySelector('thead').innerHTML = '<tr>' + cols.map((c) => `<th>${c}</th>`).join('') + '</tr>';
+      table.querySelector('tbody').innerHTML = rows.map((r) => '<tr>' + cols.map((c) => `<td>${r[c] ?? ''}</td>`).join('') + '</tr>').join('');
+      document.getElementById('sampleSection').hidden = false;
+    }
+
+    document.getElementById('previewBtn').addEventListener('click', async () => {
+      const file = document.getElementById('fileInput').files[0];
+      if (!file) { showMessage('Select a file first.', false); return; }
+      try {
+        state.fileBase64 = await fileToBase64(file);
+        state.filename = file.name;
+        const res = await fetch('/api/purchase/import/preview', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ file_base64: state.fileBase64, filename: state.filename }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Preview failed');
+        state.columns = data.columns;
+        state.fields = data.fields;
+        state.mapping = data.detected_mapping;
+        state.template = data.template;
+        document.getElementById('meta').hidden = false;
+        document.getElementById('meta').textContent = `Template: ${data.template} · Rows: ${data.row_count}`;
+        renderMapping();
+        renderSample(data.sample_rows);
+        showMessage('Column mapping detected. Review and import.');
+      } catch (err) {
+        showMessage(err.message, false);
+      }
+    });
+
+    document.getElementById('saveProfileBtn').addEventListener('click', async () => {
+      const profileId = document.getElementById('profileId').value.trim();
+      if (!profileId) { showMessage('Enter a profile ID.', false); return; }
+      const res = await fetch('/api/purchase/mapping-profiles', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ profile_id: profileId, mapping: state.mapping, template: state.template, label: profileId }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showMessage(data.detail || 'Save failed', false); return; }
+      showMessage(`Profile "${profileId}" saved.`);
+    });
+
+    document.getElementById('importBtn').addEventListener('click', async () => {
+      const sessionId = document.getElementById('sessionId').value.trim();
+      if (!sessionId) { showMessage('Enter session ID.', false); return; }
+      if (!state.fileBase64) { showMessage('Preview file first.', false); return; }
+      const res = await fetch('/api/purchase/import', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          session_id: sessionId,
+          file_base64: state.fileBase64,
+          filename: state.filename,
+          mapping: state.mapping,
+          profile_id: document.getElementById('profileId').value.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showMessage(data.detail || 'Import failed', false); return; }
+      showMessage(`Imported ${data.row_count} purchase invoices into session ${sessionId}.`);
+    });
+  </script>
+</body>
+</html>

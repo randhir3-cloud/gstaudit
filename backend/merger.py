@@ -8,6 +8,10 @@ import numpy as np
 import openpyxl
 from openpyxl.styles import PatternFill, Font as OxlFont
 
+from models.dealer_metadata import DealerMetadata, WorkbookMetadataResponse
+from services.dealer_metadata_service import extract_from_files
+from services.dealer_validation import DealerValidationError, validate_dealer_consistency
+
 MONTH_MAP = {
     '01': 'Jan', '02': 'Feb', '03': 'Mar', '04': 'Apr',
     '05': 'May', '06': 'Jun', '07': 'Jul', '08': 'Aug',
@@ -211,13 +215,18 @@ def merge_eway_bills(files: List[Tuple[str, bytes]]) -> io.BytesIO:
     return output_buffer
 
 # ---- GSTR-1 Merger ----
-def merge_gstr1_files(files: List[Tuple[str, bytes]]) -> Tuple[io.BytesIO, str, List[str]]:
+def merge_gstr1_files(
+    files: List[Tuple[str, bytes]],
+) -> Tuple[io.BytesIO, str, List[str], DealerMetadata, str]:
     """
     files: List of tuples containing (filename, file_content_bytes)
-    Returns: (output_bytes_io, auto_name, missing_months_list)
+    Returns: (output_bytes_io, auto_name, missing_months_list, dealer, workbook_id)
     """
     if not files:
         raise ValueError("No files provided for merging.")
+
+    dealer_records = extract_from_files(files, "gstr1")
+    dealer = validate_dealer_consistency(dealer_records)
 
     filenames = [f[0] for f in files]
     missing = find_missing_months(filenames)
@@ -295,13 +304,17 @@ def merge_gstr1_files(files: List[Tuple[str, bytes]]) -> Tuple[io.BytesIO, str, 
     )
     val_col = README_VALUE_COL + 1
 
-    if readme_ws_name:
+    if dealer.gstin and dealer.financial_year:
+        safe_gstin = re.sub(r'[\\/:*?"<>|]', '_', dealer.gstin)
+        safe_fy = re.sub(r'[\\/:*?"<>|]', '_', dealer.financial_year)
+        auto_name = f"GSTR1_{safe_gstin}_{safe_fy}_Merged.xlsx"
+    elif readme_ws_name:
         ws_rm_meta = wb[readme_ws_name]
-        gstin_val  = ws_rm_meta.cell(row=6, column=val_col).value or ''
-        fy_val     = ws_rm_meta.cell(row=4, column=val_col).value or ''
+        gstin_val = ws_rm_meta.cell(row=6, column=val_col).value or ''
+        fy_val = ws_rm_meta.cell(row=4, column=val_col).value or ''
         safe_gstin = re.sub(r'[\\/:*?"<>|]', '_', str(gstin_val).strip())
-        safe_fy    = re.sub(r'[\\/:*?"<>|]', '_', str(fy_val).strip())
-        auto_name  = f"GSTR1_{safe_gstin}_{safe_fy}_Merged.xlsx"
+        safe_fy = re.sub(r'[\\/:*?"<>|]', '_', str(fy_val).strip())
+        auto_name = f"GSTR1_{safe_gstin}_{safe_fy}_Merged.xlsx"
     else:
         auto_name = "GSTR1_Merged.xlsx"
 
@@ -372,11 +385,14 @@ def merge_gstr1_files(files: List[Tuple[str, bytes]]) -> Tuple[io.BytesIO, str, 
             )
             apply_data_style(sp_ref_hdr, sp_cell)
 
+    dealer.tax_period = tax_period_text
+    workbook_id = WorkbookMetadataResponse.build_workbook_id("gstr1", dealer, filenames)
+
     output_buffer = io.BytesIO()
     wb.save(output_buffer)
     output_buffer.seek(0)
 
-    return output_buffer, auto_name, missing
+    return output_buffer, auto_name, missing, dealer, workbook_id
 
 # ---- GSTR-2A Merger ----
 GSTR2A_SKIP_SHEETS = {'read me'}
@@ -563,13 +579,18 @@ def extract_gstr2a_summary_rows(
 
     return rows
 
-def merge_gstr2a_files(files: List[Tuple[str, bytes]]) -> Tuple[io.BytesIO, str, List[str]]:
+def merge_gstr2a_files(
+    files: List[Tuple[str, bytes]],
+) -> Tuple[io.BytesIO, str, List[str], DealerMetadata, str]:
     """
     Merge monthly GSTR-2A workbooks, keeping only invoice/note total rows.
     Preserves row formatting from source files (bold totals, number formats).
     """
     if not files:
         raise ValueError("No files provided for merging.")
+
+    dealer_records = extract_from_files(files, "gstr2a")
+    dealer = validate_dealer_consistency(dealer_records)
 
     filenames = [f[0] for f in files]
     missing = find_missing_months(filenames)
@@ -633,7 +654,11 @@ def merge_gstr2a_files(files: List[Tuple[str, bytes]]) -> Tuple[io.BytesIO, str,
         None
     )
 
-    if readme_ws_name:
+    if dealer.gstin and dealer.financial_year:
+        safe_gstin = re.sub(r'[\\/:*?"<>|]', '_', dealer.gstin)
+        safe_fy = re.sub(r'[\\/:*?"<>|]', '_', dealer.financial_year)
+        auto_name = f"GSTR2A_{safe_gstin}_{safe_fy}_Merged.xlsx"
+    elif readme_ws_name:
         ws_rm_meta = wb[readme_ws_name]
         gstin_val = ws_rm_meta.cell(row=2, column=3).value or ''
         fy_val = ws_rm_meta.cell(row=3, column=5).value or ''
@@ -699,7 +724,10 @@ def merge_gstr2a_files(files: List[Tuple[str, bytes]]) -> Tuple[io.BytesIO, str,
     for cached_wb in file_cache.values():
         cached_wb.close()
 
+    dealer.tax_period = tax_period_text
+    workbook_id = WorkbookMetadataResponse.build_workbook_id("gstr2a", dealer, filenames)
+
     output_buffer = io.BytesIO()
     wb.save(output_buffer)
     output_buffer.seek(0)
-    return output_buffer, auto_name, missing
+    return output_buffer, auto_name, missing, dealer, workbook_id

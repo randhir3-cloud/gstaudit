@@ -9,6 +9,15 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on('error', (err, _req, res) => {
+            console.warn('[vite proxy]', err.message);
+            if (res && !res.headersSent && typeof res.writeHead === 'function') {
+              res.writeHead(502, { 'Content-Type': 'text/plain' });
+              res.end('Bad gateway');
+            }
+          });
+        },
       },
     },
   },

@@ -1,4 +1,22 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: gstaudit-postgres
+    environment:
+      POSTGRES_USER: gais
+      POSTGRES_PASSWORD: gais
+      POSTGRES_DB: gais
+    ports:
+      - "5432:5432"
+    volumes:
+      - gais_pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gais -d gais"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: ./backend
@@ -7,6 +25,12 @@ services:
     container_name: gstaudit-backend
     ports:
       - "8001:8000"
+    environment:
+      DATABASE_PROVIDER: ${DATABASE_PROVIDER:-memory}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://gais:gais@postgres:5432/gais}
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:
@@ -20,3 +44,6 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+volumes:
+  gais_pg_data:

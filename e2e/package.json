@@ -1,0 +1,14 @@
+{
+  "name": "gstaudit-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "fixtures": "python ../scripts/generate-eway-fixtures.py",
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "install-browsers": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0"
+  }
+}

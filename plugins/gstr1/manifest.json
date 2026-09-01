@@ -1,0 +1,50 @@
+{
+  "id": "gstr1",
+  "name": "GSTR-1",
+  "version": "1.0.0",
+  "author": "GAIS Platform",
+  "description": "GSTR-1 merge and GSTR-1 vs EWB Outward comparison",
+  "required_permissions": ["merge_files", "run_comparison"],
+  "routes": [
+    "/api/merge/gstr1",
+    "/api/comparison/gstr1-eway"
+  ],
+  "datasets": {
+    "gstr1": "GSTR-1"
+  },
+  "cards": [
+    {
+      "dataset_key": "gstr1",
+      "title": "GSTR-1",
+      "component": "DatasetCard"
+    }
+  ],
+  "comparisons": [
+    {
+      "comparison_id": "gstr1_ewb_outward",
+      "left_dataset": "gstr1",
+      "right_dataset": "ewb_outward",
+      "label": "GSTR-1 ↔ EWB OUTWARD",
+      "trigger_route": "/api/comparison/gstr1-eway"
+    }
+  ],
+  "jobs": [
+    {
+      "job_type": "comparison",
+      "comparison_id": "gstr1_ewb_outward",
+      "title": "GSTR-1 ↔ EWB Outward Comparison"
+    },
+    {
+      "job_type": "merge",
+      "title": "GSTR-1 Merge"
+    }
+  ],
+  "reports": [],
+  "navigation": [],
+  "settings": {
+    "audit_actions": {
+      "/api/comparison/gstr1-eway": "comparison",
+      "/api/merge/gstr1": "merge"
+    }
+  }
+}

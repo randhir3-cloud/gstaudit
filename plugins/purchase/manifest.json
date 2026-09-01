@@ -1,0 +1,84 @@
+{
+  "id": "purchase",
+  "name": "Purchase Register",
+  "version": "1.0.0",
+  "author": "GAIS Platform",
+  "description": "Purchase Register reconciliation against GSTR-2A and E-Way Bill Inward",
+  "required_permissions": ["merge_files", "run_comparison", "view_reports", "view_intelligence"],
+  "routes": [
+    "/api/purchase/import",
+    "/api/purchase/import/preview",
+    "/api/purchase/mapping-profiles",
+    "/api/purchase/ui",
+    "/api/comparison/purchase-gstr2a",
+    "/api/comparison/purchase-ewb"
+  ],
+  "datasets": {
+    "purchase_register": "Purchase Register",
+    "gstr2a": "GSTR-2A",
+    "ewb_inward": "EWB INWARD"
+  },
+  "cards": [
+    {
+      "dataset_key": "purchase_register",
+      "title": "Purchase Register",
+      "component": "DatasetCard"
+    }
+  ],
+  "comparisons": [
+    {
+      "comparison_id": "purchase_register_vs_gstr2a",
+      "left_dataset": "purchase_register",
+      "right_dataset": "gstr2a",
+      "label": "Purchase Register ↔ GSTR-2A",
+      "trigger_route": "/api/comparison/purchase-gstr2a"
+    },
+    {
+      "comparison_id": "purchase_register_vs_ewb_inward",
+      "left_dataset": "purchase_register",
+      "right_dataset": "ewb_inward",
+      "label": "Purchase Register ↔ EWB INWARD",
+      "trigger_route": "/api/comparison/purchase-ewb"
+    }
+  ],
+  "jobs": [
+    {
+      "job_type": "comparison",
+      "comparison_id": "purchase_register_vs_gstr2a",
+      "title": "Purchase Register ↔ GSTR-2A Comparison"
+    },
+    {
+      "job_type": "comparison",
+      "comparison_id": "purchase_register_vs_ewb_inward",
+      "title": "Purchase Register ↔ EWB Inward Comparison"
+    }
+  ],
+  "reports": [
+    {
+      "section_id": "purchase_register_reconciliation",
+      "title": "Purchase Register Reconciliation",
+      "order": 15
+    }
+  ],
+  "navigation": [
+    {
+      "label": "Purchase Register Import",
+      "path": "/api/purchase/ui",
+      "permission": "merge_files",
+      "icon": "Upload"
+    },
+    {
+      "label": "Purchase vs GSTR-2A",
+      "path": "/comparison?pair=purchase_register_vs_gstr2a",
+      "permission": "run_comparison",
+      "icon": "Compare"
+    }
+  ],
+  "settings": {
+    "audit_actions": {
+      "/api/purchase/import": "upload",
+      "/api/comparison/purchase-gstr2a": "comparison",
+      "/api/comparison/purchase-ewb": "comparison"
+    }
+  }
+}

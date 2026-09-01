@@ -1,0 +1,60 @@
+{
+  "id": "gstr2a",
+  "name": "GSTR-2A",
+  "version": "1.0.0",
+  "author": "GAIS Platform",
+  "description": "GSTR-2A purchase verification against E-Way Bill Inward",
+  "required_permissions": ["merge_files", "run_comparison", "view_reports"],
+  "routes": [
+    "/api/merge/gstr2a",
+    "/api/comparison/gstr2a-eway"
+  ],
+  "datasets": {
+    "gstr2a": "GSTR-2A",
+    "ewb_inward": "EWB INWARD"
+  },
+  "cards": [
+    {
+      "dataset_key": "gstr2a",
+      "title": "GSTR-2A",
+      "component": "DatasetCard"
+    }
+  ],
+  "comparisons": [
+    {
+      "comparison_id": "gstr2a_ewb_inward",
+      "left_dataset": "gstr2a",
+      "right_dataset": "ewb_inward",
+      "label": "GSTR-2A ↔ EWB INWARD",
+      "trigger_route": "/api/comparison/gstr2a-eway"
+    }
+  ],
+  "jobs": [
+    {
+      "job_type": "comparison",
+      "comparison_id": "gstr2a_ewb_inward",
+      "title": "GSTR-2A ↔ EWB Inward Comparison"
+    }
+  ],
+  "reports": [
+    {
+      "section_id": "purchase_reconciliation",
+      "title": "Purchase Reconciliation",
+      "order": 20
+    }
+  ],
+  "navigation": [
+    {
+      "label": "GSTR-2A Comparison",
+      "path": "/comparison?pair=gstr2a_ewb_inward",
+      "permission": "run_comparison",
+      "icon": "Compare"
+    }
+  ],
+  "settings": {
+    "audit_actions": {
+      "/api/comparison/gstr2a-eway": "comparison",
+      "/api/merge/gstr2a": "merge"
+    }
+  }
+}
