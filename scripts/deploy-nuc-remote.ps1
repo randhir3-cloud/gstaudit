@@ -1,5 +1,5 @@
 # deploy-nuc-remote.ps1
-# GST Audit (gstexcel) - NUC Production Deployment Script
+# GST Audit (gstaudit) - NUC Production Deployment Script
 #
 # Responsibility: DEPLOY ONLY (G1-G5)
 #   G1  Git pull / SHA verification

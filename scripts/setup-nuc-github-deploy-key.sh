@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run ON the NUC once (interactive): bash scripts/setup-nuc-github-deploy-key.sh
-# Creates a passphrase-free deploy key for git@github.com:randhir3-cloud/gstexcel.git
+# Creates a passphrase-free deploy key for git@github.com:randhir3-cloud/gstaudit.git
 
 set -euo pipefail
 
@@ -40,7 +40,7 @@ fi
 
 echo ""
 echo "=== Add this deploy key to GitHub ==="
-echo "Repo: randhir3-cloud/gstexcel → Settings → Deploy keys → Add deploy key"
+echo "Repo: randhir3-cloud/gstaudit → Settings → Deploy keys → Add deploy key"
 echo "Title: nuc-gstaudit-deploy"
 echo "Allow write access: OFF (read-only is enough for git pull)"
 echo ""
@@ -48,6 +48,6 @@ cat "${KEY}.pub"
 echo ""
 echo "Then on the NUC:"
 echo "  cd ~/apps/gstaudit"
-echo "  git remote set-url origin git@github.com-gstaudit:randhir3-cloud/gstexcel.git"
-echo "  ssh -T git@github.com-gstaudit    # expect: Hi randhir3-cloud/gstexcel! ..."
+echo "  git remote set-url origin git@github.com-gstaudit:randhir3-cloud/gstaudit.git"
+echo "  ssh -T git@github.com-gstaudit    # expect: Hi randhir3-cloud/gstaudit! ..."
 echo "  git pull"

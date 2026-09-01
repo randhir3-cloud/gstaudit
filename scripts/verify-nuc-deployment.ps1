@@ -1,5 +1,5 @@
 # verify-nuc-deployment.ps1
-# GST Audit (gstexcel) - NUC Runtime Verification Script
+# GST Audit (gstaudit) - NUC Runtime Verification Script
 #
 # Verification Gates:
 #   V1  Container recreation (StartedAt recency)
