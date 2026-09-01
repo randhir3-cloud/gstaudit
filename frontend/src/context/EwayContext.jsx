@@ -46,11 +46,13 @@ export function EwayProvider({ children }) {
   }, []);
 
   const applyMergeResult = useCallback((direction, result) => {
-    const blob = base64ToBlob(
-      result.workbook_base64,
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    );
-    const { workbook_base64, ...summary } = result;
+    const blob = result.blob
+      ? result.blob
+      : base64ToBlob(
+          result.workbook_base64,
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        );
+    const { workbook_base64, blob: _b, ...summary } = result;
 
     updateWorkflow(direction, {
       mergeStatus: 'merged',

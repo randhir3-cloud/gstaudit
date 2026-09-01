@@ -30,6 +30,10 @@ import {
   getFYMonthSortKey,
 } from '../utils/fileHelpers';
 
+import { mergeGstr1Files } from '../utils/excel/gstr1Merger';
+import { mergeGstr2aFiles } from '../utils/excel/gstr2aMerger';
+import { downloadBlob } from '../utils/fileHelpers';
+
 const API_BASE_URL = '';
 
 export default function MergePage() {
@@ -157,6 +161,7 @@ export default function MergePage() {
   };
 
   const moveFileDown = (index) => {
+    if (index === 0) return;
     setFiles((prev) => {
       if (index === prev.length - 1) return prev;
       const copy = [...prev];
@@ -189,78 +194,52 @@ export default function MergePage() {
     setError(null);
     setSuccessMessage(null);
 
-    const formData = new FormData();
-    files.forEach((f) => formData.append('files', f.file));
-
-    const endpoint = activeTab === 'gstr2a'
-      ? '/api/merge/gstr2a'
-      : '/api/merge/gstr1';
-    const queryParam = `?ignore_missing=${ignoreMissing}`;
-
     try {
-      const response = await fetch(`${API_BASE_URL}${endpoint}${queryParam}`, {
-        method: 'POST',
-        headers: authHeaders(),
-        body: formData,
-      });
+      const fileObjects = files.map((f) => f.file);
+      let result;
 
-      if (!response.ok) {
-        const errorData = await response.json();
-
-        if ((activeTab === 'gstr1' || activeTab === 'gstr2a') && errorData.error_type === 'missing_months') {
-          setWarningModal({ isOpen: true, missingMonths: errorData.missing });
-          setIsMerging(false);
-          return;
-        }
-
-        if (errorData.error_type === 'dealer_mismatch' || errorData.error_type === 'dealer_metadata_missing') {
-          throw new Error(formatDealerMismatchError(errorData));
-        }
-
-        throw new Error(errorData.detail || errorData.message || 'An error occurred during file merge.');
+      if (activeTab === 'gstr1') {
+        result = await mergeGstr1Files(fileObjects, { ignoreMissing });
+      } else if (activeTab === 'gstr2a') {
+        result = await mergeGstr2aFiles(fileObjects, { ignoreMissing });
+      } else {
+        throw new Error(`Unsupported tab: ${activeTab}`);
       }
 
-      const metadata = parseWorkbookMetadataHeader(response);
-      if (metadata) {
+      const filename = outputName || result.suggested_filename || 'merged_output.xlsx';
+
+      if (result.dealer) {
         setWorkbookMetadata({
-          ...metadata,
-          current_dataset: metadata.current_dataset || outputName,
+          dealer: result.dealer,
+          workbook_id: result.workbook_id,
+          return_type: activeTab,
+          source_files: files.map((f) => f.name),
+          current_dataset: filename,
         });
-      }
 
-      const blob = await response.blob();
-      const contentDisposition = response.headers.get('Content-Disposition');
-      let filename = outputName || 'merged_output.xlsx';
-      if (contentDisposition) {
-        const match = contentDisposition.match(/filename="(.+?)"/);
-        if (match?.[1]) filename = match[1];
-      }
-
-      const downloadUrl = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = downloadUrl;
-      link.setAttribute('download', filename);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(downloadUrl);
-
-      if (metadata) {
-        setWorkbookMetadata({ ...metadata, current_dataset: filename });
         recordMerge(activeTab, {
-          ...metadata,
+          dealer: result.dealer,
+          workbook_id: result.workbook_id,
           suggested_filename: filename,
           source_files: files.map((f) => f.name),
           row_count: 0,
-          financial_year: metadata.dealer?.financial_year,
+          financial_year: result.dealer?.financial_year,
         });
       }
+
+      downloadBlob(result.blob, filename);
 
       setSuccessMessage(`Successfully merged ${files.length} files. Output saved as: ${filename}`);
       setWarningModal({ isOpen: false, missingMonths: [] });
     } catch (err) {
       console.error(err);
-      setError(err.message || 'Failed to connect to the backend server. Make sure it is running.');
+      if (err.payload?.error_type === 'missing_months') {
+        setWarningModal({ isOpen: true, missingMonths: err.payload.missing });
+      } else if (err.payload?.error_type === 'dealer_mismatch' || err.payload?.error_type === 'dealer_metadata_missing') {
+        setError(formatDealerMismatchError(err.payload));
+      } else {
+        setError(err.message || 'An error occurred during file merge.');
+      }
     } finally {
       setIsMerging(false);
     }
