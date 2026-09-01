@@ -34,6 +34,11 @@ import {
 import { mergeGstr1Files } from '../utils/excel/gstr1Merger';
 import { mergeGstr2aFiles } from '../utils/excel/gstr2aMerger';
 import { downloadBlob } from '../utils/fileHelpers';
+import {
+  detectPreviouslyMergedWorkbook,
+  computeWorkbookFingerprint,
+} from '../utils/excel/duplicateDetection';
+import { readWorkbookRaw } from '../utils/excel/excelUtils';
 
 const API_BASE_URL = '';
 
@@ -67,7 +72,8 @@ export default function MergePage() {
 
   const refreshDealerMetadata = async (fileEntries) => {
     if (activeTab !== 'gstr1' && activeTab !== 'gstr2a') return;
-    if (fileEntries.length === 0) {
+    const validEntries = fileEntries.filter((f) => !f.status || f.status === 'valid');
+    if (validEntries.length === 0) {
       clearDealer();
       return;
     }
@@ -75,13 +81,13 @@ export default function MergePage() {
     setIsExtracting(true);
     try {
       const metadata = await extractDealerMetadata(
-        fileEntries.map((entry) => entry.file),
+        validEntries.map((entry) => entry.file),
         activeTab,
       );
       setWorkbookMetadata(metadata);
       recordUpload(
         activeTab,
-        fileEntries.map((e) => e.name),
+        validEntries.map((e) => e.name),
         metadata.dealer,
       );
     } catch (err) {
@@ -100,7 +106,7 @@ export default function MergePage() {
     addFilesToList(Array.from(e.target.files));
   };
 
-  const addFilesToList = (selectedFiles) => {
+  const addFilesToList = async (selectedFiles) => {
     setError(null);
     setSuccessMessage(null);
 
@@ -114,26 +120,64 @@ export default function MergePage() {
       return;
     }
 
-    const newFiles = validFiles.map((file, index) => ({
-      id: `file_${Date.now()}_${index}_${Math.random().toString(36).substr(2, 5)}`,
-      file,
-      name: file.name,
-      size: file.size,
-      period: (activeTab === 'gstr1' || activeTab === 'gstr2a')
-        ? extractPeriodFromFilename(file.name)
-        : null,
-    }));
+    setIsExtracting(true);
 
-    setFiles((prev) => {
-      const combined = [...prev, ...newFiles];
-      if (activeTab === 'gstr1' || activeTab === 'gstr2a') {
-        combined.sort((a, b) => getFYMonthSortKey(a.name) - getFYMonthSortKey(b.name));
+    try {
+      const existingFingerprints = new Map();
+      files.forEach((f) => {
+        if (f.fingerprint) existingFingerprints.set(f.fingerprint, f.name);
+      });
+
+      const newFiles = [];
+      for (let i = 0; i < validFiles.length; i++) {
+        const file = validFiles[i];
+        const wb = await readWorkbookRaw(file);
+        const prevMergeInfo = detectPreviouslyMergedWorkbook(wb, file.name);
+        const fingerprint = await computeWorkbookFingerprint(file, wb);
+
+        let status = 'valid';
+        let duplicateOf = null;
+        let prevReason = null;
+
+        if (prevMergeInfo.isPreviouslyMerged) {
+          status = 'previously_merged';
+          prevReason = prevMergeInfo.reason;
+        } else if (existingFingerprints.has(fingerprint)) {
+          status = 'duplicate_file';
+          duplicateOf = existingFingerprints.get(fingerprint);
+        } else {
+          existingFingerprints.set(fingerprint, file.name);
+        }
+
+        newFiles.push({
+          id: `file_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 5)}`,
+          file,
+          name: file.name,
+          size: file.size,
+          fingerprint,
+          status,
+          duplicateOf,
+          previouslyMergedReason: prevReason,
+          period: (activeTab === 'gstr1' || activeTab === 'gstr2a')
+            ? extractPeriodFromFilename(file.name)
+            : null,
+        });
       }
-      refreshDealerMetadata(combined);
-      return combined;
-    });
 
-    if (fileInputRef.current) fileInputRef.current.value = '';
+      setFiles((prev) => {
+        const combined = [...prev, ...newFiles];
+        if (activeTab === 'gstr1' || activeTab === 'gstr2a') {
+          combined.sort((a, b) => getFYMonthSortKey(a.name) - getFYMonthSortKey(b.name));
+        }
+        refreshDealerMetadata(combined);
+        return combined;
+      });
+    } catch (err) {
+      setError(`Error reading uploaded files: ${err.message}`);
+    } finally {
+      setIsExtracting(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   const removeFile = (id) => {
@@ -191,12 +235,21 @@ export default function MergePage() {
       return;
     }
 
+    const validFilesToMerge = files.filter((f) => !f.status || f.status === 'valid');
+    if (validFilesToMerge.length === 0) {
+      setError('No valid source files available to merge.');
+      return;
+    }
+
+    const previouslyMergedExcluded = files.filter((f) => f.status === 'previously_merged').length;
+    const duplicateFilesExcluded = files.filter((f) => f.status === 'duplicate_file').length;
+
     setIsMerging(true);
     setError(null);
     setSuccessMessage(null);
 
     try {
-      const fileObjects = files.map((f) => f.file);
+      const fileObjects = validFilesToMerge.map((f) => f.file);
       let result;
 
       if (activeTab === 'gstr1') {
@@ -214,7 +267,7 @@ export default function MergePage() {
           dealer: result.dealer,
           workbook_id: result.workbook_id,
           return_type: activeTab,
-          source_files: files.map((f) => f.name),
+          source_files: validFilesToMerge.map((f) => f.name),
           current_dataset: filename,
         });
 
@@ -222,15 +275,21 @@ export default function MergePage() {
           dealer: result.dealer,
           workbook_id: result.workbook_id,
           suggested_filename: filename,
-          source_files: files.map((f) => f.name),
-          row_count: 0,
+          source_files: validFilesToMerge.map((f) => f.name),
+          row_count: result.row_count || 0,
           financial_year: result.dealer?.financial_year,
         });
       }
 
       downloadBlob(result.blob, filename);
 
-      setSuccessMessage(`Successfully merged ${files.length} files. Output saved as: ${filename}`);
+      const parts = [`${validFilesToMerge.length} files merged`];
+      if (previouslyMergedExcluded > 0) parts.push(`${previouslyMergedExcluded} merged output excluded`);
+      if (duplicateFilesExcluded > 0) parts.push(`${duplicateFilesExcluded} duplicate files skipped`);
+      if (result.duplicate_rows_skipped > 0) parts.push(`${result.duplicate_rows_skipped} duplicate records removed`);
+      parts.push(`${result.row_count || 0} final records`);
+
+      setSuccessMessage(`Merged successfully · ${parts.join(' · ')}`);
       setWarningModal({ isOpen: false, missingMonths: [] });
     } catch (err) {
       console.error(err);
@@ -344,10 +403,48 @@ export default function MergePage() {
                   className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 text-zinc-950 dark:text-zinc-100"
                 />
               </div>
+
+              {/* Pre-merge Safety Summary */}
+              {(() => {
+                const total = files.length;
+                const prevMerged = files.filter((f) => f.status === 'previously_merged').length;
+                const dupFiles = files.filter((f) => f.status === 'duplicate_file').length;
+                const validCount = files.filter((f) => !f.status || f.status === 'valid').length;
+
+                return (
+                  <div className="bg-zinc-50 dark:bg-zinc-800/60 rounded-xl p-3 text-xs space-y-1 border border-zinc-200/60 dark:border-zinc-700/50">
+                    <div className="flex justify-between text-zinc-600 dark:text-zinc-300">
+                      <span>Files selected:</span>
+                      <span className="font-semibold text-zinc-900 dark:text-white">{total}</span>
+                    </div>
+                    {prevMerged > 0 && (
+                      <div className="flex justify-between text-purple-600 dark:text-purple-400 font-medium">
+                        <span>Previously merged excluded:</span>
+                        <span>{prevMerged}</span>
+                      </div>
+                    )}
+                    {dupFiles > 0 && (
+                      <div className="flex justify-between text-orange-600 dark:text-orange-400 font-medium">
+                        <span>Duplicate files excluded:</span>
+                        <span>{dupFiles}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between pt-1 border-t border-zinc-200 dark:border-zinc-700 font-semibold text-emerald-600 dark:text-emerald-400">
+                      <span>Files ready to merge:</span>
+                      <span>{validCount}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               <button
                 type="button"
                 onClick={() => triggerMerge(false)}
-                disabled={isMerging || isExtracting}
+                disabled={
+                  isMerging ||
+                  isExtracting ||
+                  files.filter((f) => !f.status || f.status === 'valid').length === 0
+                }
                 className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-300 dark:disabled:bg-zinc-800 text-white font-medium py-3 rounded-xl transition-all flex items-center justify-center space-x-2"
               >
                 {isMerging ? <><Loader2 className="h-5 w-5 animate-spin" /><span>Merging Sheets...</span></> : <><Download className="h-5 w-5" /><span>Merge & Download</span></>}

@@ -1,5 +1,9 @@
 import { readWorkbookRaw, sheetTo2DArray, cleanStr, MONTH_MAP } from './excelUtils.js';
 import { normalizeGSTIN, isValidGSTIN } from '../formatGSTIN.js';
+import {
+  detectPreviouslyMergedWorkbook,
+  computeWorkbookFingerprint,
+} from './duplicateDetection.js';
 
 const ROWS_TO_INSPECT = 500;
 const DOMINANCE_THRESHOLD = 0.70; // 70% dominance threshold for direction
@@ -432,14 +436,19 @@ export async function classifyEwayFile(file, dealerGstin = '', expectedDirection
   return classifySingleParsedFile(fileData, resolvedDealer, expectedDirection);
 }
 
-/** Classify a collection of files with intelligent cross-file dealer resolution */
+/** Classify a collection of files with intelligent cross-file dealer resolution, previously-merged detection, and duplicate checking */
 export async function classifyEwayFiles(files, options = {}) {
   const parsedFiles = [];
+  const seenFingerprints = new Map(); // fingerprint -> original filename
 
   for (const file of files) {
     const wb = await readWorkbookRaw(file);
+    const prevMergeInfo = detectPreviouslyMergedWorkbook(wb, file.name);
+    const fingerprint = await computeWorkbookFingerprint(file, wb);
+
     let allRows = [];
     for (const name of wb.SheetNames) {
+      if (name.trim().toUpperCase() === 'GST_AUDIT_META') continue;
       const rows = sheetTo2DArray(wb.Sheets[name]);
       if (rows.length > 0) {
         allRows = allRows.concat(rows);
@@ -448,16 +457,57 @@ export async function classifyEwayFiles(files, options = {}) {
     const parsed = parseEwaySheetRows(allRows);
     parsedFiles.push({
       filename: file.name,
+      previouslyMerged: prevMergeInfo,
+      fingerprint,
       ...parsed,
     });
   }
 
-  // Cross-file resolution of Dealer GSTIN
-  const batchResolution = resolveBatchDealerGstin(parsedFiles, options.dealerGstin);
+  // Cross-file resolution of Dealer GSTIN (ignoring previously merged files for dealer resolution)
+  const validForResolution = parsedFiles.filter((p) => !p.previouslyMerged.isPreviouslyMerged);
+  const batchResolution = resolveBatchDealerGstin(
+    validForResolution.length > 0 ? validForResolution : parsedFiles,
+    options.dealerGstin
+  );
   const effectiveDealer = batchResolution.gstin;
 
   const classifications = parsedFiles.map((fData) => {
-    return classifySingleParsedFile(fData, effectiveDealer, options.expectedDirection);
+    // 1. Layer 1: Previously merged output check
+    if (fData.previouslyMerged?.isPreviouslyMerged) {
+      return {
+        filename: fData.filename,
+        detected_type: fData.previouslyMerged.mergeType || 'eway',
+        confidence: Math.round((fData.previouslyMerged.confidence || 1) * 100),
+        dealer_gstin: effectiveDealer || '',
+        month: '—',
+        financial_year: '—',
+        status: 'previously_merged',
+        message: fData.previouslyMerged.reason || 'This workbook is a previously merged GST Audit output.',
+        rows_inspected: fData.dataRows.length,
+        fingerprint: fData.fingerprint,
+      };
+    }
+
+    // 2. Layer 2: Exact duplicate source file check
+    if (seenFingerprints.has(fData.fingerprint)) {
+      const originalName = seenFingerprints.get(fData.fingerprint);
+      const baseClass = classifySingleParsedFile(fData, effectiveDealer, options.expectedDirection);
+      return {
+        ...baseClass,
+        status: 'duplicate_file',
+        message: `Duplicate file content of "${originalName}". Excluded from merge.`,
+        duplicate_of: originalName,
+        fingerprint: fData.fingerprint,
+      };
+    }
+    seenFingerprints.set(fData.fingerprint, fData.filename);
+
+    // 3. Normal classification
+    const res = classifySingleParsedFile(fData, effectiveDealer, options.expectedDirection);
+    return {
+      ...res,
+      fingerprint: fData.fingerprint,
+    };
   });
 
   return {
@@ -473,6 +523,8 @@ export async function classifyEwayFiles(files, options = {}) {
     },
     total_files: files.length,
     valid_count: classifications.filter((c) => c.status === 'valid').length,
+    previously_merged_count: classifications.filter((c) => c.status === 'previously_merged').length,
+    duplicate_file_count: classifications.filter((c) => c.status === 'duplicate_file').length,
     wrong_section_count: classifications.filter((c) => c.status === 'wrong_section').length,
     unknown_count: classifications.filter((c) => c.status === 'unknown' || c.status === 'pending_dealer_gstin').length,
   };

@@ -62,6 +62,18 @@ export function EwayProvider({ children }) {
         );
     const { workbook_base64, blob: _b, ...summary } = result;
 
+    const parts = [`${result.source_files?.length || 0} files merged`];
+    if (result.previously_merged_excluded) {
+      parts.push(`${result.previously_merged_excluded} merged output excluded`);
+    }
+    if (result.duplicate_files_skipped) {
+      parts.push(`${result.duplicate_files_skipped} duplicate files skipped`);
+    }
+    if (result.duplicate_rows_skipped > 0) {
+      parts.push(`${result.duplicate_rows_skipped} duplicate records removed`);
+    }
+    parts.push(`${result.row_count || 0} final records`);
+
     updateWorkflow(direction, {
       mergeStatus: 'merged',
       mergedWorkbook: { blob, filename: result.suggested_filename },
@@ -69,7 +81,7 @@ export function EwayProvider({ children }) {
       dealerMetadata: result.dealer || { ...EMPTY_DEALER },
       outputName: result.suggested_filename,
       error: null,
-      successMessage: `Merged ${result.row_count} rows across ${result.sheet_list.length} sheet(s).`,
+      successMessage: `Merged successfully · ${parts.join(' · ')}`,
       warningModal: { isOpen: false, missingMonths: [] },
     });
   }, [updateWorkflow]);

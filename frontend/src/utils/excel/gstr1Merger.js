@@ -8,10 +8,15 @@ import {
   findMissingMonths,
   FULL_MONTH_MAP,
   cleanStr,
-} from './excelUtils';
-import { extractDealerMetadataFromFiles } from './dealerMetadataService';
+} from './excelUtils.js';
+import { extractDealerMetadataFromFiles } from './dealerMetadataService.js';
+import {
+  buildGstr1RecordKey,
+  createMergeMetadataSheet,
+  META_SHEET_NAME,
+} from './duplicateDetection.js';
 
-const GSTR1_SKIP_SHEETS = new Set(['read me', 'readme']);
+const GSTR1_SKIP_SHEETS = new Set(['read me', 'readme', 'gst_audit_meta']);
 const GSTR1_HEADER_ROW_INDEX = 3; // 0-based row 3 = Excel Row 4
 
 export async function mergeGstr1Files(files, options = {}) {
@@ -66,8 +71,11 @@ export async function mergeGstr1Files(files, options = {}) {
   // 4. Load first file as template workbook
   const templateWb = await readWorkbook(sortedFiles[0]);
 
-  // 5. Collect rows per sheet across all files
+  // 5. Collect rows per sheet across all files with row-level deduplication
   const sheetData = {}; // sheetName -> { headers: string[], rows: any[][] }
+  const seenRecordKeys = new Set();
+  let duplicateRowsSkipped = 0;
+  let totalDataRows = 0;
 
   for (const file of sortedFiles) {
     const period = extractPeriod(file.name);
@@ -91,11 +99,21 @@ export async function mergeGstr1Files(files, options = {}) {
         };
       }
 
+      const headers = sheetData[sheetName].headers;
+
       // Append data rows with Source_Period
       for (const row of dataRows) {
         // Check if row has any non-empty data
         const hasData = row.some((val) => cleanStr(val) !== '');
         if (hasData) {
+          const recKey = buildGstr1RecordKey(sheetName, row, headers);
+          if (recKey && seenRecordKeys.has(recKey)) {
+            duplicateRowsSkipped++;
+            continue;
+          }
+          if (recKey) seenRecordKeys.add(recKey);
+
+          totalDataRows++;
           sheetData[sheetName].rows.push([...row, period]);
         }
       }
@@ -144,6 +162,18 @@ export async function mergeGstr1Files(files, options = {}) {
     XLSX.utils.book_append_sheet(outWb, newWs, sheetName);
   }
 
+  // 7. Append GST_AUDIT_META sheet marker
+  const metaWs = createMergeMetadataSheet({
+    mergeType: 'GSTR1',
+    gstin: dealer.gstin || '',
+    legalName: dealer.legal_name || '',
+    financialYear: dealer.financial_year || '',
+    sourceFileCount: filenames.length,
+    sourceFiles: filenames,
+    totalRows: totalDataRows,
+  });
+  XLSX.utils.book_append_sheet(outWb, metaWs, META_SHEET_NAME);
+
   // Output filename
   let autoName = 'GSTR1_Merged.xlsx';
   if (dealer.gstin && dealer.financial_year) {
@@ -163,5 +193,7 @@ export async function mergeGstr1Files(files, options = {}) {
     return_type: 'gstr1',
     source_files: filenames,
     sheet_list: outWb.SheetNames,
+    row_count: totalDataRows,
+    duplicate_rows_skipped: duplicateRowsSkipped,
   };
 }

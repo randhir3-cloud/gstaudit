@@ -245,8 +245,23 @@ export default function EwayWorkflowPanel({ direction, directionLabel }) {
       return;
     }
 
+    const validFilesToMerge = workflow.files.filter(
+      (f) => !f.classification?.status || f.classification.status === 'valid'
+    );
+
+    if (validFilesToMerge.length === 0) {
+      updateWorkflow({ error: 'No valid source files available to merge.' });
+      return;
+    }
+
+    const previouslyMergedExcluded = workflow.files.filter((f) => f.classification?.status === 'previously_merged').length;
+    const duplicateFilesExcluded = workflow.files.filter((f) => f.classification?.status === 'duplicate_file').length;
+
     const hasBlocking = workflow.files.some(
-      (f) => f.classification?.status && f.classification.status !== 'valid',
+      (f) => f.classification?.status &&
+             f.classification.status !== 'valid' &&
+             f.classification.status !== 'previously_merged' &&
+             f.classification.status !== 'duplicate_file'
     );
     if (hasBlocking) {
       updateWorkflow({ error: 'Resolve all validation issues before merging.' });
@@ -257,11 +272,14 @@ export default function EwayWorkflowPanel({ direction, directionLabel }) {
 
     try {
       const result = await mergeEwayWorkflow(
-        workflow.files.map((f) => f.file),
+        validFilesToMerge.map((f) => f.file),
         workflowDirection,
         ignoreMissing,
         effectiveDealerGstin,
       );
+      result.previously_merged_excluded = previouslyMergedExcluded;
+      result.duplicate_files_skipped = duplicateFilesExcluded;
+
       applyMergeResult(result);
       recordMerge(workflowDirection === 'outward' ? 'ewb_outward' : 'ewb_inward', result);
     } catch (err) {
@@ -325,11 +343,49 @@ export default function EwayWorkflowPanel({ direction, directionLabel }) {
           {workflow.files.length > 0 && (
             <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 space-y-4 shadow-sm">
               <h3 className="font-bold text-zinc-950 dark:text-zinc-100 text-sm tracking-wide uppercase">Merge Settings</h3>
+
+              {/* Pre-merge Safety Summary */}
+              {(() => {
+                const total = workflow.files.length;
+                const prevMerged = workflow.files.filter((f) => f.classification?.status === 'previously_merged').length;
+                const dupFiles = workflow.files.filter((f) => f.classification?.status === 'duplicate_file').length;
+                const validCount = workflow.files.filter((f) => !f.classification?.status || f.classification.status === 'valid').length;
+
+                return (
+                  <div className="bg-zinc-50 dark:bg-zinc-800/60 rounded-xl p-3 text-xs space-y-1 border border-zinc-200/60 dark:border-zinc-700/50">
+                    <div className="flex justify-between text-zinc-600 dark:text-zinc-300">
+                      <span>Files selected:</span>
+                      <span className="font-semibold text-zinc-900 dark:text-white">{total}</span>
+                    </div>
+                    {prevMerged > 0 && (
+                      <div className="flex justify-between text-purple-600 dark:text-purple-400 font-medium">
+                        <span>Previously merged excluded:</span>
+                        <span>{prevMerged}</span>
+                      </div>
+                    )}
+                    {dupFiles > 0 && (
+                      <div className="flex justify-between text-orange-600 dark:text-orange-400 font-medium">
+                        <span>Duplicate files excluded:</span>
+                        <span>{dupFiles}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between pt-1 border-t border-zinc-200 dark:border-zinc-700 font-semibold text-emerald-600 dark:text-emerald-400">
+                      <span>Files ready to merge:</span>
+                      <span>{validCount}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               <button
                 type="button"
                 onClick={() => triggerMerge(false)}
-                disabled={workflow.mergeStatus === 'merging' || workflow.isClassifying}
-                className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-300 dark:bg-zinc-800 text-white font-medium py-3 rounded-xl flex items-center justify-center gap-2"
+                disabled={
+                  workflow.mergeStatus === 'merging' ||
+                  workflow.isClassifying ||
+                  workflow.files.filter((f) => !f.classification?.status || f.classification.status === 'valid').length === 0
+                }
+                className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-300 dark:disabled:bg-zinc-800 text-white font-medium py-3 rounded-xl flex items-center justify-center gap-2"
               >
                 {workflow.mergeStatus === 'merging' ? <><Loader2 className="h-5 w-5 animate-spin" />Merging…</> : <><Download className="h-5 w-5" />Merge Workbook</>}
               </button>

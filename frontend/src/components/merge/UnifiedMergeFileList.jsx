@@ -8,6 +8,9 @@ const STATUS_BADGES = {
   unknown: 'bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-300 border-rose-200/50 dark:border-rose-800/50',
   pending_dealer_gstin: 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 border-zinc-200/50 dark:border-zinc-700/50',
   processing: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 border-blue-200/50 dark:border-blue-800/50',
+  previously_merged: 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 border-purple-200/60 dark:border-purple-800/60 font-semibold',
+  duplicate_file: 'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300 border-orange-200/60 dark:border-orange-800/60 font-semibold',
+  contains_duplicate_records: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 border-amber-200/50 dark:border-amber-800/50',
 };
 
 const TYPE_BADGES = {
@@ -62,16 +65,23 @@ export default function UnifiedMergeFileList({
           const dealerGstin = c.dealer_gstin || '';
           const period = c.month || fileEntry.period || '—';
           const fy = c.financial_year || '';
-          const status = c.status || 'valid';
+          const status = fileEntry.status || c.status || 'valid';
+          const isExcluded = status === 'previously_merged' || status === 'duplicate_file';
 
           return (
             <div
               key={fileEntry.id}
-              className="px-5 py-3.5 flex items-center justify-between hover:bg-zinc-50/60 dark:hover:bg-zinc-800/40 transition-colors gap-3"
+              className={`px-5 py-3.5 flex items-center justify-between hover:bg-zinc-50/60 dark:hover:bg-zinc-800/40 transition-colors gap-3 ${
+                isExcluded ? 'bg-zinc-50/40 dark:bg-zinc-900/40 opacity-80' : ''
+              }`}
             >
               {/* File details */}
               <div className="flex items-center space-x-3.5 min-w-0 flex-1">
-                <div className="p-2.5 bg-zinc-100 dark:bg-zinc-800 rounded-xl flex-shrink-0 text-zinc-500 dark:text-zinc-400 border border-zinc-200/50 dark:border-zinc-700/50">
+                <div className={`p-2.5 rounded-xl flex-shrink-0 border ${
+                  isExcluded
+                    ? 'bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400 border-amber-200/50 dark:border-amber-800/50'
+                    : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 border-zinc-200/50 dark:border-zinc-700/50'
+                }`}>
                   <FileSpreadsheet className="h-5 w-5 text-blue-600 dark:text-blue-400" />
                 </div>
 
@@ -107,7 +117,11 @@ export default function UnifiedMergeFileList({
                           STATUS_BADGES[status] || STATUS_BADGES.unknown
                         }`}
                       >
-                        {status.replace(/_/g, ' ')}
+                        {status === 'previously_merged'
+                          ? 'Previously Merged'
+                          : status === 'duplicate_file'
+                          ? 'Duplicate File'
+                          : status.replace(/_/g, ' ')}
                       </span>
                     )}
                   </div>
@@ -129,6 +143,21 @@ export default function UnifiedMergeFileList({
                         FY: <strong className="font-medium text-zinc-700 dark:text-zinc-300">{fy}</strong>
                       </span>
                     )}
+                    {fileEntry.duplicateOf && (
+                      <span className="text-orange-600 dark:text-orange-400 font-medium">
+                        Duplicate of: {fileEntry.duplicateOf}
+                      </span>
+                    )}
+                    {c.duplicate_of && (
+                      <span className="text-orange-600 dark:text-orange-400 font-medium">
+                        Duplicate of: {c.duplicate_of}
+                      </span>
+                    )}
+                    {fileEntry.previouslyMergedReason && (
+                      <span className="text-purple-600 dark:text-purple-400 font-medium">
+                        {fileEntry.previouslyMergedReason}
+                      </span>
+                    )}
                     <span>{formatBytes(fileEntry.size)}</span>
                   </div>
                 </div>
@@ -139,7 +168,7 @@ export default function UnifiedMergeFileList({
                 <button
                   type="button"
                   onClick={() => onMoveUp(index)}
-                  disabled={index === 0}
+                  disabled={index === 0 || isExcluded}
                   aria-label={`Move ${fileEntry.name} up`}
                   title="Move Up"
                   className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
@@ -149,7 +178,7 @@ export default function UnifiedMergeFileList({
                 <button
                   type="button"
                   onClick={() => onMoveDown(index)}
-                  disabled={index === files.length - 1}
+                  disabled={index === files.length - 1 || isExcluded}
                   aria-label={`Move ${fileEntry.name} down`}
                   title="Move Down"
                   className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-25 disabled:cursor-not-allowed transition-colors"

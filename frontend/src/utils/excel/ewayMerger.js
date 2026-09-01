@@ -10,6 +10,11 @@ import {
   cleanStr,
 } from './excelUtils.js';
 import { classifyEwayFiles } from './ewayDetector.js';
+import {
+  buildEwayRecordKey,
+  createMergeMetadataSheet,
+  META_SHEET_NAME,
+} from './duplicateDetection.js';
 
 function findEwayDateColIndex(headers) {
   for (let i = 0; i < headers.length; i++) {
@@ -78,16 +83,19 @@ export async function mergeEwayFiles(files, direction = 'outward', options = {})
   // 3. Sort files by FY month
   const sortedFiles = [...files].sort((a, b) => fileFyKey(a.name) - fileFyKey(b.name));
 
-  // 4. Collect rows across all sheets in all files
+  // 4. Collect rows across all sheets in all files with row-level deduplication
   let masterHeaders = null;
   let masterRows = [];
   let dateColIdx = -1;
+  const seenRecordKeys = new Set();
+  let duplicateRowsSkipped = 0;
 
   for (const file of sortedFiles) {
     const periodFromName = extractPeriod(file.name);
     const wb = await readWorkbookRaw(file);
 
     for (const sheetName of wb.SheetNames) {
+      if (sheetName.trim().toUpperCase() === META_SHEET_NAME) continue;
       const rows = sheetTo2DArray(wb.Sheets[sheetName]);
       if (rows.length === 0) continue;
 
@@ -101,6 +109,13 @@ export async function mergeEwayFiles(files, direction = 'outward', options = {})
       const dataRows = rows.slice(1);
       for (const row of dataRows) {
         if (!row.some((val) => cleanStr(val) !== '')) continue;
+
+        const recKey = buildEwayRecordKey(row, headers);
+        if (recKey && seenRecordKeys.has(recKey)) {
+          duplicateRowsSkipped++;
+          continue;
+        }
+        if (recKey) seenRecordKeys.add(recKey);
 
         let srcPeriod = '';
         if (dateColIdx !== -1 && row[dateColIdx]) {
@@ -130,19 +145,32 @@ export async function mergeEwayFiles(files, direction = 'outward', options = {})
   const outSheetName = direction === 'inward' ? 'EWB_Inward' : 'EWB_Outward';
   XLSX.utils.book_append_sheet(outWb, outWs, outSheetName);
 
-  const suggestedFilename = direction === 'inward' ? 'EWB_Inward_Merged.xlsx' : 'EWB_Outward_Merged.xlsx';
-  const blob = workbookToBlob(outWb);
-
   const dealerGstin = classResp.dealer_resolution.gstin || options.dealerGstin || '';
   const legalName = classResp.dealer_resolution.legal_name || '';
   const financialYear = classResp.dealer_resolution.financial_year || classResp.classifications[0]?.financial_year || '';
+
+  // 6. Append GST_AUDIT_META sheet
+  const metaWs = createMergeMetadataSheet({
+    mergeType: direction === 'inward' ? 'EWAY_INWARD' : 'EWAY_OUTWARD',
+    gstin: dealerGstin,
+    legalName: legalName,
+    financialYear: financialYear,
+    sourceFileCount: filenames.length,
+    sourceFiles: filenames,
+    totalRows: masterRows.length,
+  });
+  XLSX.utils.book_append_sheet(outWb, metaWs, META_SHEET_NAME);
+
+  const suggestedFilename = direction === 'inward' ? 'EWB_Inward_Merged.xlsx' : 'EWB_Outward_Merged.xlsx';
+  const blob = workbookToBlob(outWb);
 
   return {
     blob,
     suggested_filename: suggestedFilename,
     missing_months: missingMonths,
     row_count: masterRows.length,
-    sheet_list: [outSheetName],
+    duplicate_rows_skipped: duplicateRowsSkipped,
+    sheet_list: [outSheetName, META_SHEET_NAME],
     source_files: filenames,
     financial_year: financialYear,
     dealer: {

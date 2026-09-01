@@ -70,22 +70,23 @@ function createMockGstr2aFile(filename, period, gstin = '03AABCV6919K1Z5') {
   return new File([buf], filename, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }
 
-function createMockEwayFile(filename, direction, dealerGstin = '03AABCV6919K1Z5') {
+function createMockEwayFile(filename, direction, dealerGstin = '03AABCV6919K1Z5', offset = 0) {
   const wb = XLSX.utils.book_new();
   const rows = [
     ['EWB No.', 'From GSTIN & Name', 'To GSTIN & Name', 'Doc No. & Dt.', 'Assess Val.', 'EWB No. & Dt.'],
   ];
 
   for (let i = 1; i <= 5; i++) {
-    const fromGstin = direction === 'outward' ? dealerGstin : `07ACQPR6971B1Z${i}`;
+    const idx = offset + i;
+    const fromGstin = direction === 'outward' ? dealerGstin : `07ACQPR6971B1Z${idx % 10}`;
     const toGstin = direction === 'inward' ? `${dealerGstin} / TEST BANK LTD` : '29AABCT1332L000';
     rows.push([
-      `10158157900${i}`,
+      `10158157900${idx}`,
       fromGstin,
       toGstin,
-      `INV-${String(i).padStart(3, '0')} - 11/04/2023`,
-      1000 * i,
-      `10158157900${i} - 11/04/2023 10:29:00`,
+      `INV-${String(idx).padStart(3, '0')} - 11/04/2023`,
+      1000 * idx,
+      `10158157900${idx} - 11/04/2023 10:29:00`,
     ]);
   }
 
@@ -126,8 +127,8 @@ describe('Browser-only Merge & Classification Suite', () => {
   });
 
   it('Detects E-Way Bill inward automatically with multi-supplier records', async () => {
-    const file1 = createMockEwayFile('EWB_MIS_Report_Excel (1).xls', 'inward', '03AABCU9603R1ZX');
-    const file2 = createMockEwayFile('EWB_MIS_Report_Excel (2).xls', 'inward', '03AABCU9603R1ZX');
+    const file1 = createMockEwayFile('EWB_MIS_Report_Excel (1).xls', 'inward', '03AABCU9603R1ZX', 0);
+    const file2 = createMockEwayFile('EWB_MIS_Report_Excel (2).xls', 'inward', '03AABCU9603R1ZX', 5);
     const resp = await classifyEwayFiles([file1, file2]);
     expect(resp.dealer_resolution.gstin).toBe('03AABCU9603R1ZX');
     expect(resp.classifications[0].detected_type).toBe('inward');
@@ -136,8 +137,8 @@ describe('Browser-only Merge & Classification Suite', () => {
   });
 
   it('Merges E-Way Bill Inward files into EWB_Inward_Merged.xlsx', async () => {
-    const file1 = createMockEwayFile('ewb_inward_042023.xlsx', 'inward', '03AABCU9603R1ZX');
-    const file2 = createMockEwayFile('ewb_inward_052023.xlsx', 'inward', '03AABCU9603R1ZX');
+    const file1 = createMockEwayFile('ewb_inward_042023.xlsx', 'inward', '03AABCU9603R1ZX', 0);
+    const file2 = createMockEwayFile('ewb_inward_052023.xlsx', 'inward', '03AABCU9603R1ZX', 5);
     const result = await mergeEwayFiles([file1, file2], 'inward', { ignoreMissing: true });
     expect(result.suggested_filename).toBe('EWB_Inward_Merged.xlsx');
     expect(result.row_count).toBe(10);
@@ -145,8 +146,8 @@ describe('Browser-only Merge & Classification Suite', () => {
   });
 
   it('Merges E-Way Bill Outward files into EWB_Outward_Merged.xlsx', async () => {
-    const file1 = createMockEwayFile('ewb_outward_042023.xlsx', 'outward', '03AABCV6919K1Z5');
-    const file2 = createMockEwayFile('ewb_outward_052023.xlsx', 'outward', '03AABCV6919K1Z5');
+    const file1 = createMockEwayFile('ewb_outward_042023.xlsx', 'outward', '03AABCV6919K1Z5', 0);
+    const file2 = createMockEwayFile('ewb_outward_052023.xlsx', 'outward', '03AABCV6919K1Z5', 5);
     const result = await mergeEwayFiles([file1, file2], 'outward', { ignoreMissing: true });
     expect(result.suggested_filename).toBe('EWB_Outward_Merged.xlsx');
     expect(result.row_count).toBe(10);
