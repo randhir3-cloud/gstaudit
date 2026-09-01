@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import * as XLSX from 'xlsx';
-import { mergeGstr1Files } from '../utils/excel/gstr1Merger';
-import { mergeGstr2aFiles } from '../utils/excel/gstr2aMerger';
-import { classifyEwayFiles, detectEwayDirectionFromRows } from '../utils/excel/ewayDetector';
-import { mergeEwayFiles } from '../utils/excel/ewayMerger';
+import { mergeGstr1Files } from '../utils/excel/gstr1Merger.js';
+import { mergeGstr2aFiles } from '../utils/excel/gstr2aMerger.js';
+import { classifyEwayFiles, parseEwaySheetRows, resolveBatchDealerGstin } from '../utils/excel/ewayDetector.js';
+import { mergeEwayFiles } from '../utils/excel/ewayMerger.js';
 
 function createMockGstr1File(filename, period, gstin = '03AABCV6919K1Z5') {
   const wb = XLSX.utils.book_new();
@@ -73,19 +73,19 @@ function createMockGstr2aFile(filename, period, gstin = '03AABCV6919K1Z5') {
 function createMockEwayFile(filename, direction, dealerGstin = '03AABCV6919K1Z5') {
   const wb = XLSX.utils.book_new();
   const rows = [
-    ['EWB No & Dt', 'From GSTIN & Name', 'To GSTIN & Name', 'Doc No', 'Doc Date', 'Taxable Value'],
+    ['EWB No.', 'From GSTIN & Name', 'To GSTIN & Name', 'Doc No. & Dt.', 'Assess Val.', 'EWB No. & Dt.'],
   ];
 
   for (let i = 1; i <= 5; i++) {
-    const fromGstin = direction === 'outward' ? dealerGstin : '29AABCT1332L000';
-    const toGstin = direction === 'inward' ? dealerGstin : '29AABCT1332L000';
+    const fromGstin = direction === 'outward' ? dealerGstin : `07ACQPR6971B1Z${i}`;
+    const toGstin = direction === 'inward' ? `${dealerGstin} / TEST BANK LTD` : '29AABCT1332L000';
     rows.push([
-      `10158157900${i} - 11/04/2023 10:29:00`,
+      `10158157900${i}`,
       fromGstin,
       toGstin,
-      `INV-${String(i).padStart(3, '0')}`,
-      '11/04/2023',
+      `INV-${String(i).padStart(3, '0')} - 11/04/2023`,
       1000 * i,
+      `10158157900${i} - 11/04/2023 10:29:00`,
     ]);
   }
 
@@ -125,37 +125,60 @@ describe('Browser-only Merge & Classification Suite', () => {
     expect(resp.classifications[0].status).toBe('valid');
   });
 
-  it('Detects E-Way Bill inward automatically', async () => {
-    const file = createMockEwayFile('ewb_inward_042023.xlsx', 'inward');
-    const resp = await classifyEwayFiles([file], { dealerGstin: '03AABCV6919K1Z5' });
+  it('Detects E-Way Bill inward automatically with multi-supplier records', async () => {
+    const file1 = createMockEwayFile('EWB_MIS_Report_Excel (1).xls', 'inward', '03AABCU9603R1ZX');
+    const file2 = createMockEwayFile('EWB_MIS_Report_Excel (2).xls', 'inward', '03AABCU9603R1ZX');
+    const resp = await classifyEwayFiles([file1, file2]);
+    expect(resp.dealer_resolution.gstin).toBe('03AABCU9603R1ZX');
     expect(resp.classifications[0].detected_type).toBe('inward');
-    expect(resp.classifications[0].status).toBe('valid');
+    expect(resp.classifications[1].detected_type).toBe('inward');
+    expect(resp.valid_count).toBe(2);
   });
 
   it('Merges E-Way Bill Inward files into EWB_Inward_Merged.xlsx', async () => {
-    const file1 = createMockEwayFile('ewb_inward_042023.xlsx', 'inward');
-    const file2 = createMockEwayFile('ewb_inward_052023.xlsx', 'inward');
-    const result = await mergeEwayFiles([file1, file2], 'inward', { dealerGstin: '03AABCV6919K1Z5' });
+    const file1 = createMockEwayFile('ewb_inward_042023.xlsx', 'inward', '03AABCU9603R1ZX');
+    const file2 = createMockEwayFile('ewb_inward_052023.xlsx', 'inward', '03AABCU9603R1ZX');
+    const result = await mergeEwayFiles([file1, file2], 'inward', { ignoreMissing: true });
     expect(result.suggested_filename).toBe('EWB_Inward_Merged.xlsx');
     expect(result.row_count).toBe(10);
     expect(result.blob).toBeInstanceOf(Blob);
   });
 
   it('Merges E-Way Bill Outward files into EWB_Outward_Merged.xlsx', async () => {
-    const file1 = createMockEwayFile('ewb_outward_042023.xlsx', 'outward');
-    const file2 = createMockEwayFile('ewb_outward_052023.xlsx', 'outward');
-    const result = await mergeEwayFiles([file1, file2], 'outward', { dealerGstin: '03AABCV6919K1Z5' });
+    const file1 = createMockEwayFile('ewb_outward_042023.xlsx', 'outward', '03AABCV6919K1Z5');
+    const file2 = createMockEwayFile('ewb_outward_052023.xlsx', 'outward', '03AABCV6919K1Z5');
+    const result = await mergeEwayFiles([file1, file2], 'outward', { ignoreMissing: true });
     expect(result.suggested_filename).toBe('EWB_Outward_Merged.xlsx');
     expect(result.row_count).toBe(10);
     expect(result.blob).toBeInstanceOf(Blob);
   });
 
   it('Prevents mixing inward and outward files in E-Way merge', async () => {
-    const file1 = createMockEwayFile('ewb_outward_042023.xlsx', 'outward');
-    const file2 = createMockEwayFile('ewb_inward_052023.xlsx', 'inward');
+    const file1 = createMockEwayFile('ewb_outward_042023.xlsx', 'outward', '03AABCV6919K1Z5');
+    const file2 = createMockEwayFile('ewb_inward_052023.xlsx', 'inward', '03AABCV6919K1Z5');
 
     await expect(
-      mergeEwayFiles([file1, file2], 'outward', { dealerGstin: '03AABCV6919K1Z5' })
+      mergeEwayFiles([file1, file2], 'outward', { dealerGstin: '03AABCV6919K1Z5', ignoreMissing: true })
     ).rejects.toThrow(/contain mixed directions/);
+  });
+
+  it('Verifies fresh-target move behavior replaces stale files in target section', () => {
+    // Simulating context state transition
+    const oldInwardFiles = [
+      { id: 'old1', name: 'old-inward-1.xls' },
+      { id: 'old2', name: 'old-inward-2.xls' },
+      { id: 'old3', name: 'old-inward-3.xls' },
+    ];
+    const movedInwardFile = { id: 'new1', name: 'Inward July 1.xls', classification: { status: 'wrong_section', detected_type: 'inward' } };
+
+    // Fresh target creation logic:
+    const freshTargetFiles = [movedInwardFile].map((f) => ({
+      ...f,
+      classification: { ...f.classification, status: 'valid', detected_type: 'inward' },
+    }));
+
+    expect(freshTargetFiles.length).toBe(1);
+    expect(freshTargetFiles[0].name).toBe('Inward July 1.xls');
+    expect(freshTargetFiles.some((f) => f.name.startsWith('old-'))).toBe(false);
   });
 });

@@ -20,8 +20,23 @@ const STATUS_LABELS = {
 export default function EwaySummaryCard({ workflow, directionLabel }) {
   const { dealerMetadata, summary, mergeStatus, files } = workflow;
   const dealerName = dealerDisplayName(dealerMetadata);
-  const monthsUploaded = summary?.uploaded_months?.length ?? files.length;
-  const totalRows = summary?.row_count ?? '—';
+
+  // Compute unique months
+  const uniqueMonthsCount = React.useMemo(() => {
+    const months = new Set();
+    files.forEach((f) => {
+      const m = f.classification?.month || f.period;
+      if (m && m !== '—' && m !== 'Unknown Period') {
+        months.add(m);
+      }
+    });
+    return months.size;
+  }, [files]);
+
+  const gstin = dealerMetadata?.gstin || workflow.files[0]?.classification?.dealer_gstin || '';
+  const financialYear = summary?.financial_year || dealerMetadata?.financial_year || workflow.files[0]?.classification?.financial_year || '';
+  const totalFiles = files.length;
+  const totalRows = summary?.row_count ?? (workflow.files.reduce((acc, f) => acc + (f.classification?.rows_inspected || 0), 0) || '—');
 
   return (
     <div className="rounded-2xl border border-emerald-200/70 dark:border-emerald-900/40 bg-gradient-to-r from-emerald-50/70 to-white dark:from-emerald-950/20 dark:to-zinc-900 p-5 shadow-sm">
@@ -41,11 +56,12 @@ export default function EwaySummaryCard({ workflow, directionLabel }) {
           {STATUS_LABELS[mergeStatus] || mergeStatus}
         </span>
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <Stat label="Dealer Name" value={dealerName !== 'No dealer loaded' ? dealerName : '—'} />
-        <Stat label="GSTIN" value={dealerMetadata?.gstin} />
-        <Stat label="Financial Year" value={summary?.financial_year || dealerMetadata?.financial_year} />
-        <Stat label="Months Uploaded" value={monthsUploaded} />
+        <Stat label="GSTIN" value={gstin || '—'} />
+        <Stat label="Financial Year" value={financialYear || '—'} />
+        <Stat label="Files Uploaded" value={totalFiles} />
+        <Stat label="Unique Months" value={uniqueMonthsCount > 0 ? uniqueMonthsCount : (totalFiles > 0 ? '—' : 0)} />
         <Stat label="Total Rows" value={totalRows} />
       </div>
     </div>

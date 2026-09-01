@@ -94,6 +94,9 @@ export function findMissingMonths(filenames) {
 
 /** Read a file object into an ArrayBuffer or binary string */
 export async function readFileAsArrayBuffer(file) {
+  if (typeof file.arrayBuffer === 'function') {
+    return file.arrayBuffer();
+  }
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => resolve(e.target.result);

@@ -26,7 +26,7 @@ function createInitialWorkflow(direction) {
 export function EwayProvider({ children }) {
   const [outward, setOutward] = useState(() => createInitialWorkflow('outward'));
   const [inward, setInward] = useState(() => createInitialWorkflow('inward'));
-  const [activeSubTab, setActiveSubTab] = useState('outward');
+  const [activeSubTab, setActiveSubTab] = useState('inward');
   const [dealerGstin, setDealerGstin] = useState('');
   const [dealerGstinSource, setDealerGstinSource] = useState('none');
   const [dealerGstinModalOpen, setDealerGstinModalOpen] = useState(false);
@@ -42,6 +42,14 @@ export function EwayProvider({ children }) {
       setInward((prev) => (typeof updater === 'function' ? updater(prev) : { ...prev, ...updater }));
     } else {
       setOutward((prev) => (typeof updater === 'function' ? updater(prev) : { ...prev, ...updater }));
+    }
+  }, []);
+
+  const resetDirection = useCallback((direction) => {
+    if (direction === 'inward') {
+      setInward(createInitialWorkflow('inward'));
+    } else {
+      setOutward(createInitialWorkflow('outward'));
     }
   }, []);
 
@@ -72,21 +80,46 @@ export function EwayProvider({ children }) {
     setDealerGstinModalOpen(false);
   }, []);
 
-  const moveFileToDirection = useCallback((fileEntry, targetDirection, sourceDirection) => {
-    updateWorkflow(sourceDirection, (prev) => ({
-      ...prev,
-      files: prev.files.filter((f) => f.id !== fileEntry.id),
-      wrongUploadModal: { isOpen: false, fileEntry: null, detectedType: '', targetDirection: '' },
-    }));
-    updateWorkflow(targetDirection, (prev) => ({
-      ...prev,
-      files: [...prev.files, { ...fileEntry, classification: { ...fileEntry.classification, status: 'valid' } }],
-      successMessage: `Moved ${fileEntry.name} to ${targetDirection.toUpperCase()} section.`,
-    }));
-    if (targetDirection !== activeSubTab) {
-      setActiveSubTab(targetDirection);
+  /** Atomically resets the target direction, removes files from source if present, and sets moved files on fresh target */
+  const moveFilesToFreshDirection = useCallback((filesToMove, targetDirection, sourceDirection) => {
+    const fileEntries = Array.isArray(filesToMove) ? filesToMove : [filesToMove];
+    const fileIdsToRemove = new Set(fileEntries.map((f) => f.id));
+
+    // 1. Clean source workflow
+    if (sourceDirection) {
+      updateWorkflow(sourceDirection, (prev) => ({
+        ...prev,
+        files: prev.files.filter((f) => !fileIdsToRemove.has(f.id)),
+        wrongUploadModal: { isOpen: false, fileEntries: [], detectedType: '', targetDirection: '' },
+      }));
     }
-  }, [updateWorkflow, activeSubTab]);
+
+    // 2. Completely fresh target workflow with ONLY the moved file(s)
+    const freshTarget = createInitialWorkflow(targetDirection);
+    freshTarget.files = fileEntries.map((f) => ({
+      ...f,
+      classification: {
+        ...f.classification,
+        status: 'valid',
+        detected_type: targetDirection,
+      },
+    }));
+    const filenames = fileEntries.map((f) => f.name).join(', ');
+    freshTarget.successMessage = `Moved ${filenames} to ${targetDirection.toUpperCase()} section.`;
+
+    if (targetDirection === 'inward') {
+      setInward(freshTarget);
+    } else {
+      setOutward(freshTarget);
+    }
+
+    // 3. Switch active tab to target
+    setActiveSubTab(targetDirection);
+  }, [updateWorkflow]);
+
+  const moveFileToDirection = useCallback((fileEntry, targetDirection, sourceDirection) => {
+    moveFilesToFreshDirection([fileEntry], targetDirection, sourceDirection);
+  }, [moveFilesToFreshDirection]);
 
   const value = useMemo(
     () => ({
@@ -103,8 +136,10 @@ export function EwayProvider({ children }) {
       setPendingUploadQueue,
       getWorkflow,
       updateWorkflow,
+      resetDirection,
       applyMergeResult,
       moveFileToDirection,
+      moveFilesToFreshDirection,
     }),
     [
       outward,
@@ -117,8 +152,10 @@ export function EwayProvider({ children }) {
       pendingUploadQueue,
       getWorkflow,
       updateWorkflow,
+      resetDirection,
       applyMergeResult,
       moveFileToDirection,
+      moveFilesToFreshDirection,
     ],
   );
 

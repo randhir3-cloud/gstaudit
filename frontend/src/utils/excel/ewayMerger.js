@@ -8,8 +8,8 @@ import {
   findMissingMonths,
   MONTH_MAP,
   cleanStr,
-} from './excelUtils';
-import { classifyEwayFiles } from './ewayDetector';
+} from './excelUtils.js';
+import { classifyEwayFiles } from './ewayDetector.js';
 
 function findEwayDateColIndex(headers) {
   for (let i = 0; i < headers.length; i++) {
@@ -134,6 +134,8 @@ export async function mergeEwayFiles(files, direction = 'outward', options = {})
   const blob = workbookToBlob(outWb);
 
   const dealerGstin = classResp.dealer_resolution.gstin || options.dealerGstin || '';
+  const legalName = classResp.dealer_resolution.legal_name || '';
+  const financialYear = classResp.dealer_resolution.financial_year || classResp.classifications[0]?.financial_year || '';
 
   return {
     blob,
@@ -142,12 +144,12 @@ export async function mergeEwayFiles(files, direction = 'outward', options = {})
     row_count: masterRows.length,
     sheet_list: [outSheetName],
     source_files: filenames,
-    financial_year: classResp.classifications[0]?.financial_year || '',
+    financial_year: financialYear,
     dealer: {
       gstin: dealerGstin,
-      legal_name: '',
-      trade_name: '',
-      financial_year: classResp.classifications[0]?.financial_year || '',
+      legal_name: legalName,
+      trade_name: legalName,
+      financial_year: financialYear,
       tax_period: '',
     },
     uploaded_months: filenames.map((name) => extractPeriod(name)),

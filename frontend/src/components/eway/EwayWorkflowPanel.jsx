@@ -11,6 +11,7 @@ import {
 import { useEwayWorkflow } from '../../context/EwayContext';
 import { useDealer } from '../../context/DealerContext';
 import { useAuditSession } from '../../context/AuditSessionContext';
+import { EMPTY_DEALER } from '../../types/dealer';
 import { classifyEwayFiles, mergeEwayWorkflow } from '../../api/eway';
 import {
   extractPeriodFromFilename,
@@ -18,9 +19,8 @@ import {
   downloadBlob,
 } from '../../utils/fileHelpers';
 import FileUploadZone from '../merge/FileUploadZone';
-import FileList from '../merge/FileList';
+import UnifiedMergeFileList from '../merge/UnifiedMergeFileList';
 import EwaySummaryCard from './EwaySummaryCard';
-import EwayValidationTable from './EwayValidationTable';
 import WorkbookPreviewModal from './WorkbookPreviewModal';
 import WrongUploadDialog from './WrongUploadDialog';
 import DealerGstinModal from './DealerGstinModal';
@@ -37,6 +37,7 @@ export default function EwayWorkflowPanel({ direction, directionLabel }) {
     dealerGstinModalOpen,
     setDealerGstinModalOpen,
     moveFileToDirection,
+    moveFilesToFreshDirection,
     pendingUploadQueue,
     setPendingUploadQueue,
   } = useEwayWorkflow(direction);
@@ -63,6 +64,9 @@ export default function EwayWorkflowPanel({ direction, directionLabel }) {
       return;
     }
 
+    const wrongFiles = [];
+    const validFilesToAdd = [];
+
     for (let i = 0; i < selectedFiles.length; i += 1) {
       const file = selectedFiles[i];
       const classification = classifyResponse.classifications[i];
@@ -76,36 +80,67 @@ export default function EwayWorkflowPanel({ direction, directionLabel }) {
       };
 
       if (classification.status === 'wrong_section') {
-        updateWorkflow({
-          wrongUploadModal: {
-            isOpen: true,
-            fileEntry,
-            detectedType: classification.detected_type,
-            targetDirection: classification.detected_type,
-          },
-        });
-        return;
-      }
-
-      if (classification.status === 'unknown') {
+        wrongFiles.push(fileEntry);
+      } else if (classification.status === 'unknown') {
         updateWorkflow({
           error: `${file.name}: ${classification.message}`,
         });
         return;
+      } else {
+        validFilesToAdd.push(fileEntry);
       }
+    }
 
+    // If any wrong-section files detected in this batch
+    if (wrongFiles.length > 0) {
+      const targetDir = wrongFiles[0].classification.detected_type;
+      updateWorkflow({
+        wrongUploadModal: {
+          isOpen: true,
+          fileEntry: wrongFiles[0],
+          fileEntries: wrongFiles,
+          detectedType: targetDir,
+          targetDirection: targetDir,
+        },
+      });
+      return;
+    }
+
+    // Otherwise add valid files to current section
+    if (validFilesToAdd.length > 0) {
       updateWorkflow((prev) => {
-        const combined = [...prev.files, fileEntry].sort(
+        const combined = [...prev.files, ...validFilesToAdd].sort(
           (a, b) => getFYMonthSortKey(a.name) - getFYMonthSortKey(b.name),
         );
+        const resolvedGstin = classifyResponse.dealer_resolution?.gstin || effectiveDealerGstin || validFilesToAdd[0]?.classification?.dealer_gstin || '';
+        const resolvedLegalName = classifyResponse.dealer_resolution?.legal_name || prev.dealerMetadata?.legal_name || '';
+        const resolvedFy = classifyResponse.dealer_resolution?.financial_year || validFilesToAdd[0]?.classification?.financial_year || prev.dealerMetadata?.financial_year || '';
+
         recordUpload(
           workflowDirection === 'outward' ? 'ewb_outward' : 'ewb_inward',
-          [file.name],
-          { gstin: effectiveDealerGstin || classification.dealer_gstin, financial_year: classification.financial_year },
+          validFilesToAdd.map((f) => f.name),
+          {
+            gstin: resolvedGstin,
+            legal_name: resolvedLegalName,
+            financial_year: resolvedFy,
+          },
         );
+
         return {
           ...prev,
           files: combined,
+          dealerMetadata: {
+            ...prev.dealerMetadata,
+            gstin: resolvedGstin,
+            legal_name: resolvedLegalName,
+            trade_name: resolvedLegalName,
+            financial_year: resolvedFy,
+          },
+          summary: {
+            ...(prev.summary || {}),
+            financial_year: resolvedFy,
+            row_count: (prev.summary?.row_count && prev.mergeStatus === 'merged') ? prev.summary.row_count : classifyResponse.dealer_resolution?.total_rows,
+          },
           error: null,
           successMessage: null,
           mergeStatus: prev.mergeStatus === 'merged' ? 'idle' : prev.mergeStatus,
@@ -164,7 +199,22 @@ export default function EwayWorkflowPanel({ direction, directionLabel }) {
   };
 
   const removeFile = (id) => {
-    updateWorkflow((prev) => ({ ...prev, files: prev.files.filter((f) => f.id !== id) }));
+    updateWorkflow((prev) => {
+      const remaining = prev.files.filter((f) => f.id !== id);
+      if (remaining.length === 0) {
+        return {
+          ...prev,
+          files: [],
+          mergeStatus: 'idle',
+          mergedWorkbook: null,
+          summary: null,
+          dealerMetadata: { ...EMPTY_DEALER },
+          error: null,
+          successMessage: null,
+        };
+      }
+      return { ...prev, files: remaining };
+    });
   };
 
   const clearAllFiles = () => {
@@ -173,6 +223,7 @@ export default function EwayWorkflowPanel({ direction, directionLabel }) {
       mergeStatus: 'idle',
       mergedWorkbook: null,
       summary: null,
+      dealerMetadata: { ...EMPTY_DEALER },
       error: null,
       successMessage: null,
     });
@@ -236,15 +287,6 @@ export default function EwayWorkflowPanel({ direction, directionLabel }) {
     <div className="space-y-6">
       <EwaySummaryCard workflow={workflow} directionLabel={directionLabel} />
 
-      {effectiveDealerGstin && (
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">
-          Dealer GSTIN: <span className="font-mono font-semibold text-zinc-700 dark:text-zinc-200">{effectiveDealerGstin}</span>
-          {dealerGstinSource !== 'none' && <span className="ml-2">(source: {dealerGstinSource})</span>}
-        </p>
-      )}
-
-      {workflow.files.length > 0 && <EwayValidationTable files={workflow.files} />}
-
       {workflow.error && (
         <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 text-rose-800 dark:text-rose-300 rounded-xl p-4 flex items-start space-x-3">
           <AlertCircle className="h-5 w-5 mt-0.5 flex-shrink-0" />
@@ -303,16 +345,16 @@ export default function EwayWorkflowPanel({ direction, directionLabel }) {
 
         {workflow.files.length > 0 && (
           <div className="lg:col-span-2">
-            <FileList
+            <UnifiedMergeFileList
               files={workflow.files}
+              mode="eway"
               onMoveUp={(index) => moveFile(index, -1)}
               onMoveDown={(index) => moveFile(index, 1)}
               onRemove={removeFile}
               onClearAll={clearAllFiles}
               notice={(
-                <div className="p-3 bg-zinc-50 dark:bg-zinc-950/40 rounded-xl border text-xs text-zinc-500 flex gap-2">
-                  <HelpCircle className="h-4 w-4 text-blue-500 mt-0.5" />
-                  <div><span className="font-semibold text-zinc-700 dark:text-zinc-300">Intelligent classification:</span> Files are inspected by content. Wrong-section uploads trigger auto-move.</div>
+                <div>
+                  <span className="font-semibold text-zinc-700 dark:text-zinc-200">Intelligent classification:</span> Files are inspected by content. Wrong-section uploads are detected automatically.
                 </div>
               )}
             />
@@ -337,14 +379,19 @@ export default function EwayWorkflowPanel({ direction, directionLabel }) {
         isOpen={wrongModal.isOpen}
         detectedType={wrongModal.detectedType}
         targetDirection={wrongModal.targetDirection}
-        filename={wrongModal.fileEntry?.name}
+        filename={
+          wrongModal.fileEntries?.length > 1
+            ? `${wrongModal.fileEntries.length} files (${wrongModal.fileEntries.map((f) => f.name).slice(0, 2).join(', ')}${wrongModal.fileEntries.length > 2 ? '...' : ''})`
+            : wrongModal.fileEntry?.name
+        }
         onMove={() => {
-          if (wrongModal.fileEntry && wrongModal.targetDirection) {
-            moveFileToDirection(wrongModal.fileEntry, wrongModal.targetDirection, workflowDirection);
+          const filesToMove = wrongModal.fileEntries?.length ? wrongModal.fileEntries : (wrongModal.fileEntry ? [wrongModal.fileEntry] : []);
+          if (filesToMove.length > 0 && wrongModal.targetDirection) {
+            moveFilesToFreshDirection(filesToMove, wrongModal.targetDirection, workflowDirection);
           }
         }}
         onCancel={() => updateWorkflow({
-          wrongUploadModal: { isOpen: false, fileEntry: null, detectedType: '', targetDirection: '' },
+          wrongUploadModal: { isOpen: false, fileEntry: null, fileEntries: [], detectedType: '', targetDirection: '' },
         })}
       />
 

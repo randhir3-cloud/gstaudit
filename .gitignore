@@ -35,6 +35,13 @@ frontend/dist/
 frontend/.vite/
 .eslintcache
 
-# Excel files
+# Excel files & Taxpayer Data Folders
 *.xlsx
 *.xls
+*.csv
+/Container Corporation of India Ltd/
+/Ujjwal SMall bank/
+/GSTR 1/
+/data/
+/datasets/
+
