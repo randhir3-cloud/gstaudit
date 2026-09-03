@@ -117,8 +117,34 @@ export async function readWorkbookRaw(file) {
   return XLSX.read(buffer, { type: 'array', cellDates: true, raw: true });
 }
 
+/** Recalculates !ref range from actual cell keys in case portal file has truncated metadata */
+export function updateSheetRefRange(sheet) {
+  if (!sheet) return;
+  const keys = Object.keys(sheet).filter((k) => !k.startsWith('!'));
+  if (keys.length === 0) return;
+  let minR = Infinity;
+  let maxR = -Infinity;
+  let minC = Infinity;
+  let maxC = -Infinity;
+  for (const k of keys) {
+    const cell = XLSX.utils.decode_cell(k);
+    if (cell.r < minR) minR = cell.r;
+    if (cell.r > maxR) maxR = cell.r;
+    if (cell.c < minC) minC = cell.c;
+    if (cell.c > maxC) maxC = cell.c;
+  }
+  if (minR !== Infinity && maxR >= 0) {
+    sheet['!ref'] = XLSX.utils.encode_range({
+      s: { r: minR, c: minC },
+      e: { r: maxR, c: maxC },
+    });
+  }
+}
+
 /** Convert a sheet to 2D array of rows with stringified IDs */
 export function sheetTo2DArray(sheet, options = {}) {
+  if (!sheet) return [];
+  updateSheetRefRange(sheet);
   return XLSX.utils.sheet_to_json(sheet, {
     header: 1,
     defval: '',
@@ -140,4 +166,70 @@ export function workbookToBlob(wb) {
 export function cleanStr(val) {
   if (val == null) return '';
   return String(val).trim();
+}
+
+/**
+ * Normalizes GST Rate values for comparison and grouping.
+ * Returns canonical numeric float or null for non-applicable / missing rates.
+ * Crucially distinguishes 0 (0% GST rate) from null (missing/'-'/NA).
+ */
+export function normalizeRate(val) {
+  if (val == null) return null;
+  const s = cleanStr(val);
+  if (!s || s === '-' || s === '—' || s.toLowerCase() === 'na' || s.toLowerCase() === 'n/a') {
+    return null;
+  }
+  const cleanNum = s.replace(/%/g, '').trim();
+  const num = parseFloat(cleanNum);
+  if (isNaN(num)) return null;
+  return Number(num.toFixed(4));
+}
+
+/**
+ * Formats a normalized rate for clean user-facing Excel output.
+ */
+export function formatCleanRate(val) {
+  const norm = normalizeRate(val);
+  if (norm === null) return '-';
+  return norm;
+}
+
+/**
+ * Safely parses any cell value into a numeric float.
+ * Handles strings with commas, currency symbols, and empty / '-' values.
+ */
+export function normalizeNumeric(val) {
+  if (val == null) return 0.0;
+  if (typeof val === 'number') {
+    return isNaN(val) ? 0.0 : val;
+  }
+  const s = cleanStr(val).replace(/,/g, '').replace(/[₹$]/g, '').trim();
+  if (!s || s === '-' || s === '—') return 0.0;
+  const num = parseFloat(s);
+  return isNaN(num) ? 0.0 : num;
+}
+
+/**
+ * Structural detection of portal-generated Total / Subtotal rows.
+ * Uses structural data signals (-Total suffix, Total labels) rather than relying solely on formatting.
+ */
+export function isPortalTotalRow(row, numColIdx = -1) {
+  if (!row || !Array.isArray(row)) return false;
+
+  // 1. Check designated document number column if known
+  if (numColIdx >= 0 && numColIdx < row.length) {
+    const val = cleanStr(row[numColIdx]);
+    if (/-(?:total|subtotal)$/i.test(val)) return true;
+    if (/^(?:total|grand total|subtotal)$/i.test(val)) return true;
+  }
+
+  // 2. Scan all cells for '-Total' suffix or explicit Total keyword in identity columns
+  for (let c = 0; c < row.length; c++) {
+    const s = cleanStr(row[c]);
+    if (!s) continue;
+    if (/-(?:total|subtotal)$/i.test(s)) return true;
+    if (c <= 5 && /^(?:total|grand total|subtotal)$/i.test(s)) return true;
+  }
+
+  return false;
 }

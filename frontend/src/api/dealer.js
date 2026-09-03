@@ -1,7 +1,14 @@
-import { extractDealerMetadataFromFiles } from '../utils/excel/dealerMetadataService';
+import {
+  extractDealerMetadataFromFiles,
+  extractDealerMetadataFromFile as extractDealerMetadataFromFileUtil,
+} from '../utils/excel/dealerMetadataService';
 
 export async function extractDealerMetadata(files, returnType) {
   return extractDealerMetadataFromFiles(files, returnType);
+}
+
+export async function extractDealerMetadataFromFile(file, returnType) {
+  return extractDealerMetadataFromFileUtil(file, returnType);
 }
 
 export function parseWorkbookMetadataHeader(response) {

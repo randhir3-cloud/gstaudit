@@ -5,6 +5,7 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import theme from '../theme/theme';
 import { cn } from '../lib/utils';
+import { DEFAULT_ROUTE } from '../config/appModules';
 
 export default function LoginPage() {
   const { login, isAuthenticated, loading } = useAuth();
@@ -15,7 +16,9 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
 
   if (!loading && isAuthenticated) {
-    return <Navigate to={location.state?.from?.pathname || '/'} replace />;
+    // Redirect to previously attempted route, or fall back to DEFAULT_ROUTE.
+    // DEFAULT_ROUTE is /merge — the current active module.
+    return <Navigate to={location.state?.from?.pathname || DEFAULT_ROUTE} replace />;
   }
 
   async function handleSubmit(e) {

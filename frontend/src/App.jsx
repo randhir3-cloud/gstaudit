@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { DealerProvider } from './context/DealerContext';
 import { EwayProvider } from './context/EwayContext';
 import { AuditSessionProvider } from './context/AuditSessionContext';
 import { AuthProvider } from './context/AuthContext';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/auth/ProtectedRoute';
+
+// Pages — all imports retained; source code is NOT deleted.
 import Dashboard from './pages/Dashboard';
 import MergePage from './pages/MergePage';
 import WorkbookViewer from './pages/WorkbookViewer';
@@ -19,6 +21,23 @@ import AuditIntelligenceCenter from './pages/AuditIntelligenceCenter';
 import AuditCaseManagementPage from './pages/AuditCaseManagementPage';
 import OfficerTasksPage from './pages/OfficerTasksPage';
 import SupervisorDashboardPage from './pages/SupervisorDashboardPage';
+
+// Feature configuration — single source of truth for module availability.
+import { isModuleEnabled, DEFAULT_ROUTE } from './config/appModules';
+
+/**
+ * ModuleRoute: wraps a route element with a feature-availability check.
+ * If the module is disabled → redirect to DEFAULT_ROUTE (/merge).
+ * Authentication and permission checks remain intact inside ProtectedRoute.
+ *
+ * Logic order:  authenticated? → authorized? → module enabled?
+ */
+function ModuleRoute({ moduleKey, children }) {
+  if (!isModuleEnabled(moduleKey)) {
+    return <Navigate to={DEFAULT_ROUTE} replace />;
+  }
+  return children;
+}
 
 function App() {
   const [theme, setTheme] = useState(() => {
@@ -53,18 +72,126 @@ function App() {
               </ProtectedRoute>
             }
           >
-            <Route index element={<Dashboard />} />
-            <Route path="merge" element={<ProtectedRoute permission="merge_files"><MergePage /></ProtectedRoute>} />
-            <Route path="workbook" element={<WorkbookViewer />} />
-            <Route path="comparison" element={<ComparisonScreen />} />
-            <Route path="investigation" element={<ProtectedRoute permission="update_cases"><InvestigationPage /></ProtectedRoute>} />
-            <Route path="audit-intelligence" element={<ProtectedRoute permission="view_intelligence"><AuditIntelligenceCenter /></ProtectedRoute>} />
-            <Route path="audit-cases" element={<ProtectedRoute permission="manage_audit_cases"><AuditCaseManagementPage /></ProtectedRoute>} />
-            <Route path="officer-tasks" element={<ProtectedRoute permission="manage_audit_cases"><OfficerTasksPage /></ProtectedRoute>} />
-            <Route path="supervisor-dashboard" element={<ProtectedRoute permission="supervise_audit_cases"><SupervisorDashboardPage /></ProtectedRoute>} />
-            <Route path="audit-report" element={<ProtectedRoute permission="view_reports"><AuditReportPreview /></ProtectedRoute>} />
-            <Route path="admin" element={<AdminPage />} />
-            <Route path="system-monitor" element={<SystemMonitorPage />} />
+            {/* Default landing: redirect root → /merge (the current active module). */}
+            <Route index element={<Navigate to={DEFAULT_ROUTE} replace />} />
+
+            {/* ── ENABLED MODULE ─────────────────────────────────────────── */}
+            <Route
+              path="merge"
+              element={
+                <ProtectedRoute permission="merge_files">
+                  <MergePage />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* ── DISABLED MODULES ───────────────────────────────────────── */}
+            {/* Source code & imports above are preserved. Routes redirect to  */}
+            {/* /merge until the module is re-enabled in appModules.js.        */}
+            <Route
+              path="/"
+              element={
+                <ModuleRoute moduleKey="dashboard">
+                  <Dashboard />
+                </ModuleRoute>
+              }
+            />
+            <Route
+              path="workbook"
+              element={
+                <ModuleRoute moduleKey="workbookViewer">
+                  <WorkbookViewer />
+                </ModuleRoute>
+              }
+            />
+            <Route
+              path="comparison"
+              element={
+                <ModuleRoute moduleKey="comparison">
+                  <ComparisonScreen />
+                </ModuleRoute>
+              }
+            />
+            <Route
+              path="investigation"
+              element={
+                <ModuleRoute moduleKey="investigation">
+                  <ProtectedRoute permission="update_cases">
+                    <InvestigationPage />
+                  </ProtectedRoute>
+                </ModuleRoute>
+              }
+            />
+            <Route
+              path="audit-intelligence"
+              element={
+                <ModuleRoute moduleKey="auditIntelligence">
+                  <ProtectedRoute permission="view_intelligence">
+                    <AuditIntelligenceCenter />
+                  </ProtectedRoute>
+                </ModuleRoute>
+              }
+            />
+            <Route
+              path="audit-cases"
+              element={
+                <ModuleRoute moduleKey="caseManagement">
+                  <ProtectedRoute permission="manage_audit_cases">
+                    <AuditCaseManagementPage />
+                  </ProtectedRoute>
+                </ModuleRoute>
+              }
+            />
+            <Route
+              path="officer-tasks"
+              element={
+                <ModuleRoute moduleKey="officerTasks">
+                  <ProtectedRoute permission="manage_audit_cases">
+                    <OfficerTasksPage />
+                  </ProtectedRoute>
+                </ModuleRoute>
+              }
+            />
+            <Route
+              path="supervisor-dashboard"
+              element={
+                <ModuleRoute moduleKey="supervisor">
+                  <ProtectedRoute permission="supervise_audit_cases">
+                    <SupervisorDashboardPage />
+                  </ProtectedRoute>
+                </ModuleRoute>
+              }
+            />
+            <Route
+              path="audit-report"
+              element={
+                <ModuleRoute moduleKey="auditReport">
+                  <ProtectedRoute permission="view_reports">
+                    <AuditReportPreview />
+                  </ProtectedRoute>
+                </ModuleRoute>
+              }
+            />
+            <Route
+              path="admin"
+              element={
+                <ModuleRoute moduleKey="administration">
+                  <AdminPage />
+                </ModuleRoute>
+              }
+            />
+            <Route
+              path="system-monitor"
+              element={
+                <ModuleRoute moduleKey="systemMonitor">
+                  <SystemMonitorPage />
+                </ModuleRoute>
+              }
+            />
+
+            {/* Unknown routes: no catch-all here so BrowserRouter's default
+                404 behaviour is preserved. Unknown URLs will not silently
+                redirect to /merge — only known disabled module routes do. */}
           </Route>
         </Routes>
       </BrowserRouter>

@@ -21,6 +21,7 @@ import { useDealer } from '../context/DealerContext';
 import { useAuditSession } from '../context/AuditSessionContext';
 import {
   extractDealerMetadata,
+  extractDealerMetadataFromFile,
   formatDealerMismatchError,
   parseWorkbookMetadataHeader,
 } from '../api/dealer';
@@ -135,6 +136,15 @@ export default function MergePage() {
         const prevMergeInfo = detectPreviouslyMergedWorkbook(wb, file.name);
         const fingerprint = await computeWorkbookFingerprint(file, wb);
 
+        let fileMeta = null;
+        if (activeTab === 'gstr1' || activeTab === 'gstr2a') {
+          try {
+            fileMeta = await extractDealerMetadataFromFile(file, activeTab);
+          } catch (e) {
+            // fallback gracefully
+          }
+        }
+
         let status = 'valid';
         let duplicateOf = null;
         let prevReason = null;
@@ -149,6 +159,13 @@ export default function MergePage() {
           existingFingerprints.set(fingerprint, file.name);
         }
 
+        const filePeriod =
+          fileMeta?.tax_period_display ||
+          fileMeta?.tax_period ||
+          (activeTab === 'gstr1' || activeTab === 'gstr2a'
+            ? extractPeriodFromFilename(file.name)
+            : null);
+
         newFiles.push({
           id: `file_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 5)}`,
           file,
@@ -158,9 +175,8 @@ export default function MergePage() {
           status,
           duplicateOf,
           previouslyMergedReason: prevReason,
-          period: (activeTab === 'gstr1' || activeTab === 'gstr2a')
-            ? extractPeriodFromFilename(file.name)
-            : null,
+          period: filePeriod,
+          fileMeta,
         });
       }
 

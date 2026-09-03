@@ -19,6 +19,7 @@ function MetaItem({ label, value }) {
 export function DealerHeaderView({
   dealer,
   currentDataset = '',
+  showDataset = false,
   compact = false,
   className = '',
 }) {
@@ -34,6 +35,12 @@ export function DealerHeaderView({
     );
   }
 
+  const legalName = dealer.legal_name || dealer.legalName || '';
+  const tradeName = dealer.trade_name || dealer.tradeName || '';
+  const gstin = dealer.gstin || '';
+  const financialYear = dealer.financial_year || dealer.financialYear || '';
+  const taxPeriod = dealer.tax_period || dealer.taxPeriod || '';
+
   return (
     <div
       className={`rounded-2xl border border-blue-200/70 dark:border-blue-900/40 bg-gradient-to-r from-blue-50/80 to-white dark:from-blue-950/20 dark:to-zinc-900 shadow-sm ${compact ? 'p-4' : 'p-5'} ${className}`}
@@ -45,17 +52,18 @@ export function DealerHeaderView({
         <div className="flex-1 space-y-3">
           <div>
             <h2 className={`font-bold text-zinc-950 dark:text-white ${compact ? 'text-base' : 'text-lg'}`}>
-              {dealerDisplayName(dealer)}
+              {legalName || tradeName || gstin || 'No dealer loaded'}
             </h2>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Dealer Information</p>
           </div>
-          <div className={`grid gap-4 ${compact ? 'grid-cols-2 md:grid-cols-3' : 'grid-cols-2 md:grid-cols-3 lg:grid-cols-5'}`}>
-            <MetaItem label="GSTIN" value={dealer.gstin} />
-            <MetaItem label="Financial Year" value={dealer.financial_year} />
-            <MetaItem label="Tax Period" value={dealer.tax_period} />
-            <MetaItem label="Current Dataset" value={currentDataset} />
-            {!compact && (
-              <MetaItem label="Trade Name" value={dealer.trade_name || dealer.legal_name} />
+          <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+            <MetaItem label="GSTIN" value={gstin} />
+            <MetaItem label="Legal Name" value={legalName} />
+            <MetaItem label="Trade Name" value={tradeName || '—'} />
+            <MetaItem label="Financial Year" value={financialYear} />
+            <MetaItem label="Tax Period" value={taxPeriod} />
+            {showDataset && currentDataset && (
+              <MetaItem label="Current Dataset" value={currentDataset} />
             )}
           </div>
         </div>

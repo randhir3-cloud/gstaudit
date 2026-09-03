@@ -6,25 +6,33 @@ import { Icons } from '../icons';
 import SidebarSection, { AppBrand, ThemeToggleButton } from './layout/SidebarSection';
 import { useAuth } from '../context/AuthContext';
 import { Button } from './ui/button';
+import { isModuleEnabled } from '../config/appModules';
 
+// All top-level navigation items. Items with enabled === false via isModuleEnabled()
+// are automatically hidden. To expose a module, update src/config/appModules.js.
 const NAV_ITEMS = [
-  { to: '/', label: 'Dashboard', icon: Icons.Dashboard, end: true },
-  { to: '/merge', label: 'Merge', icon: Icons.Files, permission: 'merge_files' },
-  { to: '/workbook', label: 'Workbook Viewer', icon: Icons.Table },
-  { to: '/comparison', label: 'Comparison', icon: Icons.Compare },
-  { to: '/investigation', label: 'Investigation', icon: Icons.Investigate, permission: 'update_cases' },
-  { to: '/audit-intelligence', label: 'Audit Intelligence', icon: Icons.Sparkles, permission: 'view_intelligence' },
-  { to: '/audit-cases', label: 'Case Management', icon: Icons.Shield, permission: 'manage_audit_cases' },
-  { to: '/officer-tasks', label: 'Officer Tasks', icon: Icons.Calendar, permission: 'manage_audit_cases' },
-  { to: '/supervisor-dashboard', label: 'Supervisor', icon: Icons.Users, permission: 'supervise_audit_cases' },
-  { to: '/audit-report', label: 'Audit Report', icon: Icons.Report, permission: 'view_reports' },
-  { to: '/admin', label: 'Administration', icon: Icons.Shield, permission: 'view_admin' },
-  { to: '/system-monitor', label: 'System Monitor', icon: Icons.Activity, permission: 'view_system_monitor' },
+  { to: '/', label: 'Dashboard', icon: Icons.Dashboard, end: true, moduleKey: 'dashboard' },
+  { to: '/merge', label: 'Merge', icon: Icons.Files, permission: 'merge_files', moduleKey: 'merge' },
+  { to: '/workbook', label: 'Workbook Viewer', icon: Icons.Table, moduleKey: 'workbookViewer' },
+  { to: '/comparison', label: 'Comparison', icon: Icons.Compare, moduleKey: 'comparison' },
+  { to: '/investigation', label: 'Investigation', icon: Icons.Investigate, permission: 'update_cases', moduleKey: 'investigation' },
+  { to: '/audit-intelligence', label: 'Audit Intelligence', icon: Icons.Sparkles, permission: 'view_intelligence', moduleKey: 'auditIntelligence' },
+  { to: '/audit-cases', label: 'Case Management', icon: Icons.Shield, permission: 'manage_audit_cases', moduleKey: 'caseManagement' },
+  { to: '/officer-tasks', label: 'Officer Tasks', icon: Icons.Calendar, permission: 'manage_audit_cases', moduleKey: 'officerTasks' },
+  { to: '/supervisor-dashboard', label: 'Supervisor', icon: Icons.Users, permission: 'supervise_audit_cases', moduleKey: 'supervisor' },
+  { to: '/audit-report', label: 'Audit Report', icon: Icons.Report, permission: 'view_reports', moduleKey: 'auditReport' },
+  { to: '/admin', label: 'Administration', icon: Icons.Shield, permission: 'view_admin', moduleKey: 'administration' },
+  { to: '/system-monitor', label: 'System Monitor', icon: Icons.Activity, permission: 'view_system_monitor', moduleKey: 'systemMonitor' },
 ];
 
 export default function Layout({ theme: themeMode, onToggleTheme }) {
   const { user, logout, hasPermission } = useAuth();
-  const items = NAV_ITEMS.filter((item) => !item.permission || hasPermission(item.permission));
+
+  // Step 1: filter by feature flag (module enabled in appModules.js)
+  // Step 2: filter by user permission (existing authorization — unchanged)
+  const items = NAV_ITEMS.filter(
+    (item) => isModuleEnabled(item.moduleKey) && (!item.permission || hasPermission(item.permission)),
+  );
 
   return (
     <div className={cn('min-h-screen bg-background text-foreground flex flex-col', theme.transition.theme)}>

@@ -1,9 +1,10 @@
 import React from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, Link } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import theme from '../../theme/theme';
 import { Icons } from '../../icons';
 import { Button } from '../ui/button';
+import { DEFAULT_ROUTE } from '../../config/appModules';
 
 export default function SidebarSection({ items, className, testId = 'app-nav' }) {
   return (
@@ -31,7 +32,9 @@ export default function SidebarSection({ items, className, testId = 'app-nav' })
 
 export function AppBrand({ title, subtitle }) {
   return (
-    <div className="flex items-center space-x-3 min-w-0">
+    // Logo/brand click always routes to the current default module (Merge).
+    // Update DEFAULT_ROUTE in src/config/appModules.js to change this.
+    <Link to={DEFAULT_ROUTE} className="flex items-center space-x-3 min-w-0 no-underline hover:opacity-90 transition-opacity">
       <div className={cn('p-2.5 bg-primary rounded-xl text-primary-foreground shadow-md shrink-0')} aria-hidden>
         <Icons.Spreadsheet className={Icons.size.lg} />
       </div>
@@ -39,7 +42,7 @@ export function AppBrand({ title, subtitle }) {
         <h1 className={cn(theme.text.heading, 'text-xl md:text-2xl truncate')}>{title}</h1>
         <p className={cn(theme.text.muted, 'text-xs md:text-sm truncate')}>{subtitle}</p>
       </div>
-    </div>
+    </Link>
   );
 }
 

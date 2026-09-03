@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { readWorkbookRaw, sheetTo2DArray, cleanStr } from './excelUtils.js';
+import { readWorkbookRaw, sheetTo2DArray, cleanStr, normalizeRate, normalizeNumeric } from './excelUtils.js';
 
 export const META_SHEET_NAME = 'GST_AUDIT_META';
 export const MERGER_VERSION = '1.0.0';
@@ -218,65 +218,108 @@ export function buildEwayRecordKey(row, headers = []) {
 /**
  * Builds a composite unique record key for a GSTR-1 row based on sheet type and column values.
  */
-export function buildGstr1RecordKey(sheetName, row, headers = []) {
+export function buildGstr1RecordKey(sheetName, row, headers = [], period = '') {
   if (!row || row.length === 0) return '';
   const sheet = sheetName.trim().toLowerCase();
 
   // Find column indices
   const gstinIdx = headers.findIndex((h) => /gstin|uin/i.test(cleanStr(h)));
-  const invIdx = headers.findIndex((h) => /invoice number|inv no|invoice no/i.test(cleanStr(h)));
-  const dateIdx = headers.findIndex((h) => /date|dt/i.test(cleanStr(h)));
-  const noteIdx = headers.findIndex((h) => /note number|note no/i.test(cleanStr(h)));
-  const rateIdx = headers.findIndex((h) => /^rate$/i.test(cleanStr(h)));
+  const invIdx = headers.findIndex((h) => /invoice number|inv no|invoice no/i.test(cleanStr(h)) && !/original/i.test(cleanStr(h)));
+  const dateIdx = headers.findIndex((h) => /date|dt/i.test(cleanStr(h)) && !/original/i.test(cleanStr(h)));
+  const noteIdx = headers.findIndex((h) => /note number|note no/i.test(cleanStr(h)) && !/original/i.test(cleanStr(h)));
+  const rateIdx = headers.findIndex((h) => /^rate$|^rate\s*\(/i.test(cleanStr(h)));
   const valIdx = headers.findIndex((h) => /taxable value|taxable val/i.test(cleanStr(h)));
-  const hsnIdx = headers.findIndex((h) => /^hsn$/i.test(cleanStr(h)));
+  const posIdx = headers.findIndex((h) => /place of supply/i.test(cleanStr(h)));
+  const igstIdx = headers.findIndex((h) => /integrated tax|igst/i.test(cleanStr(h)));
+  const cgstIdx = headers.findIndex((h) => /central tax|cgst/i.test(cleanStr(h)));
+  const sgstIdx = headers.findIndex((h) => /state.*tax|sgst|ut tax/i.test(cleanStr(h)));
+  const cessIdx = headers.findIndex((h) => /cess/i.test(cleanStr(h)));
+  const hsnIdx = headers.findIndex((h) => /^hsn/i.test(cleanStr(h)));
+  const uqcIdx = headers.findIndex((h) => /uqc/i.test(cleanStr(h)));
+  const descIdx = headers.findIndex((h) => /description/i.test(cleanStr(h)));
+  const docNatureIdx = headers.findIndex((h) => /nature of document/i.test(cleanStr(h)));
+  const srFromIdx = headers.findIndex((h) => /sr\.?\s*no\.?\s*from/i.test(cleanStr(h)));
+  const srToIdx = headers.findIndex((h) => /sr\.?\s*no\.?\s*to/i.test(cleanStr(h)));
 
   const gstin = gstinIdx !== -1 ? normKeyVal(row[gstinIdx]) : '';
   const inv = invIdx !== -1 ? normKeyVal(row[invIdx]) : '';
   const dt = dateIdx !== -1 ? normKeyVal(row[dateIdx]) : '';
   const note = noteIdx !== -1 ? normKeyVal(row[noteIdx]) : '';
-  const rate = rateIdx !== -1 ? normKeyVal(row[rateIdx]) : '';
-  const val = valIdx !== -1 ? normKeyVal(row[valIdx]) : '';
+  const pos = posIdx !== -1 ? normKeyVal(row[posIdx]) : '';
+  const rateVal = rateIdx !== -1 ? normalizeRate(row[rateIdx]) : null;
+  const rateStr = rateVal === null ? 'NORATE' : `RATE_${rateVal}`;
+  const taxVal = valIdx !== -1 ? normalizeNumeric(row[valIdx]).toFixed(2) : '';
+  const igstVal = igstIdx !== -1 ? normalizeNumeric(row[igstIdx]).toFixed(2) : '';
+  const cgstVal = cgstIdx !== -1 ? normalizeNumeric(row[cgstIdx]).toFixed(2) : '';
+  const sgstVal = sgstIdx !== -1 ? normalizeNumeric(row[sgstIdx]).toFixed(2) : '';
+  const cessVal = cessIdx !== -1 ? normalizeNumeric(row[cessIdx]).toFixed(2) : '';
   const hsn = hsnIdx !== -1 ? normKeyVal(row[hsnIdx]) : '';
+  const uqc = uqcIdx !== -1 ? normKeyVal(row[uqcIdx]) : '';
+  const desc = descIdx !== -1 ? normKeyVal(row[descIdx]) : '';
+  const docNature = docNatureIdx !== -1 ? normKeyVal(row[docNatureIdx]) : '';
+  const srFrom = srFromIdx !== -1 ? normKeyVal(row[srFromIdx]) : '';
+  const srTo = srToIdx !== -1 ? normKeyVal(row[srToIdx]) : '';
+  const srcPeriod = normKeyVal(period);
 
   if (sheet.includes('b2b') || sheet.includes('b2cl') || sheet.includes('exp')) {
-    if (inv) return `b2b_${gstin}_${inv}_${dt}_${rate}_${val}`;
+    if (inv) return `b2b_${srcPeriod}_${gstin}_${inv}_${dt}_${pos}_${rateStr}_${taxVal}_${igstVal}_${cgstVal}_${sgstVal}_${cessVal}`;
   }
   if (sheet.includes('cdnr') || sheet.includes('cdnur')) {
-    if (note) return `${sheet}_${gstin}_${note}_${dt}_${rate}_${val}`;
+    if (note) return `${sheet}_${srcPeriod}_${gstin}_${note}_${dt}_${pos}_${rateStr}_${taxVal}_${igstVal}_${cgstVal}_${sgstVal}_${cessVal}`;
+  }
+  if (sheet.includes('b2cs')) {
+    return `b2cs_${srcPeriod}_${pos}_${rateStr}_${taxVal}_${igstVal}_${cgstVal}_${sgstVal}_${cessVal}`;
   }
   if (sheet.includes('hsn')) {
-    if (hsn) return `hsn_${hsn}_${rate}_${val}`;
+    if (hsn) return `hsn_${srcPeriod}_${hsn}_${desc}_${uqc}_${rateStr}_${taxVal}_${igstVal}_${cgstVal}_${sgstVal}_${cessVal}`;
+  }
+  if (sheet.includes('docs')) {
+    return `docs_${srcPeriod}_${docNature}_${srFrom}_${srTo}`;
   }
 
   // Full row fallback (excluding Source_Period at end if present)
   const cleanCells = row.slice(0, Math.max(row.length - 1, 1)).map(normKeyVal);
-  return `${sheet}_${cleanCells.join('_')}`;
+  return `${sheet}_${srcPeriod}_${cleanCells.join('_')}`;
 }
 
 /**
  * Builds a composite unique record key for a GSTR-2A row.
  */
-export function buildGstr2aRecordKey(sheetName, row, headers = []) {
+export function buildGstr2aRecordKey(sheetName, row, headers = [], period = '') {
   if (!row || row.length === 0) return '';
   const sheet = sheetName.trim().toLowerCase();
 
-  const gstinIdx = headers.findIndex((h) => /gstin/i.test(h));
-  const invIdx = headers.findIndex((h) => /invoice number|document number|note number/i.test(h));
-  const dtIdx = headers.findIndex((h) => /date/i.test(h));
-  const valIdx = headers.findIndex((h) => /taxable value/i.test(h));
-  const rateIdx = headers.findIndex((h) => /^rate$/i.test(h));
+  const gstinIdx = headers.findIndex((h) => /gstin/i.test(cleanStr(h)));
+  const invIdx = headers.findIndex((h) => /invoice number|document number/i.test(cleanStr(h)) && !/original/i.test(cleanStr(h)));
+  const noteIdx = headers.findIndex((h) => /note number/i.test(cleanStr(h)) && !/original/i.test(cleanStr(h)));
+  const dtIdx = headers.findIndex((h) => /date/i.test(cleanStr(h)) && !/original/i.test(cleanStr(h)));
+  const posIdx = headers.findIndex((h) => /place of supply/i.test(cleanStr(h)));
+  const rateIdx = headers.findIndex((h) => /^rate/i.test(cleanStr(h)));
+  const valIdx = headers.findIndex((h) => /taxable value/i.test(cleanStr(h)));
+  const igstIdx = headers.findIndex((h) => /integrated tax|igst/i.test(cleanStr(h)));
+  const cgstIdx = headers.findIndex((h) => /central tax|cgst/i.test(cleanStr(h)));
+  const sgstIdx = headers.findIndex((h) => /state.*tax|sgst|ut tax/i.test(cleanStr(h)));
+  const cessIdx = headers.findIndex((h) => /cess/i.test(cleanStr(h)));
 
   const gstin = gstinIdx !== -1 ? normKeyVal(row[gstinIdx]) : '';
   const inv = invIdx !== -1 ? normKeyVal(row[invIdx]) : '';
+  const note = noteIdx !== -1 ? normKeyVal(row[noteIdx]) : '';
   const dt = dtIdx !== -1 ? normKeyVal(row[dtIdx]) : '';
-  const val = valIdx !== -1 ? normKeyVal(row[valIdx]) : '';
-  const rate = rateIdx !== -1 ? normKeyVal(row[rateIdx]) : '';
+  const pos = posIdx !== -1 ? normKeyVal(row[posIdx]) : '';
+  const rateVal = rateIdx !== -1 ? normalizeRate(row[rateIdx]) : null;
+  const rateStr = rateVal === null ? 'NORATE' : `RATE_${rateVal}`;
+  const taxVal = valIdx !== -1 ? normalizeNumeric(row[valIdx]).toFixed(2) : '';
+  const igstVal = igstIdx !== -1 ? normalizeNumeric(row[igstIdx]).toFixed(2) : '';
+  const cgstVal = cgstIdx !== -1 ? normalizeNumeric(row[cgstIdx]).toFixed(2) : '';
+  const sgstVal = sgstIdx !== -1 ? normalizeNumeric(row[sgstIdx]).toFixed(2) : '';
+  const cessVal = cessIdx !== -1 ? normalizeNumeric(row[cessIdx]).toFixed(2) : '';
+  const srcPeriod = normKeyVal(period);
 
-  if (inv) {
-    return `${sheet}_${gstin}_${inv}_${dt}_${rate}_${val}`;
+  const docNo = inv || note;
+  if (docNo) {
+    return `${sheet}_${srcPeriod}_${gstin}_${docNo}_${dt}_${pos}_${rateStr}_${taxVal}_${igstVal}_${cgstVal}_${sgstVal}_${cessVal}`;
   }
 
   const cleanCells = row.slice(0, Math.max(row.length - 1, 1)).map(normKeyVal);
-  return `${sheet}_${cleanCells.join('_')}`;
+  return `${sheet}_${srcPeriod}_${cleanCells.join('_')}`;
 }

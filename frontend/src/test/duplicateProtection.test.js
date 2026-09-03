@@ -205,7 +205,7 @@ describe('Duplicate Protection Suite (3 Layers)', () => {
 
     it('Deduplicates overlapping rows in GSTR-1 while preserving unique records', async () => {
       const f1 = createMockGstr1File('GSTR1_03AABCV6919K1Z5_042022_Inv_1.xlsx', '042022', '03AABCV6919K1Z5', 0);
-      const f2 = createMockGstr1File('GSTR1_03AABCV6919K1Z5_052022_Inv_1.xlsx', '052022', '03AABCV6919K1Z5', 1); // overlapping INV-2
+      const f2 = createMockGstr1File('GSTR1_03AABCV6919K1Z5_042022_Inv_2.xlsx', '042022', '03AABCV6919K1Z5', 1); // overlapping INV-2 in same period
 
       const result = await mergeGstr1Files([f1, f2], { ignoreMissing: true });
       expect(result.duplicate_rows_skipped).toBe(1);
