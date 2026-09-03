@@ -49,9 +49,14 @@ export default function Layout({ theme: themeMode, onToggleTheme }) {
             <ThemeToggleButton themeMode={themeMode} onToggle={onToggleTheme} />
           </div>
         </div>
-        <div className={cn(theme.layout.pageShell, 'pb-3')}>
-          <SidebarSection items={items} />
-        </div>
+        {/* Module navigation — hidden when the user has only 1 visible destination.
+            A single-item nav provides no useful navigation and creates empty spacing.
+            Automatically reappears when 2+ modules are enabled and user-accessible. */}
+        {items.length >= 2 && (
+          <div className={cn(theme.layout.pageShell, 'pb-3')}>
+            <SidebarSection items={items} />
+          </div>
+        )}
       </header>
 
       <main className={cn('flex-1 w-full mx-auto', theme.layout.pageMaxWidth, theme.spacing.page)}>
